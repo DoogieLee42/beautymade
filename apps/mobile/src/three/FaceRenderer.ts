@@ -153,16 +153,23 @@ export class FaceRenderer {
     this.before = this.createInstance(face);
     this.root.add(this.after.object, this.before.object);
 
+    // Frame the face (the landmarks), not the whole head, so every model is framed alike.
+    const faceBox = new THREE.Box3();
+    const p = face.mesh.positions;
+    const point = new THREE.Vector3();
+    for (let i = 0; i < face.mesh.landmarkCount; i++) faceBox.expandByPoint(point.fromArray(p, i * 3));
+    faceBox.getCenter(this.faceCenter);
+    this.faceSize.set(faceBox.max.x - faceBox.min.x, faceBox.max.y - faceBox.min.y);
     this.after.geometry.computeBoundingBox();
     const box = this.after.geometry.boundingBox!;
-    box.getCenter(this.faceCenter);
-    this.faceCenter.z = box.max.z * 0.35 + box.min.z * 0.65;
-    this.faceSize.set(box.max.x - box.min.x, box.max.y - box.min.y);
+    const faceDepth = faceBox.max.z * 0.35 + faceBox.min.z * 0.65;
+    // With a head, orbit around a point between the face and the middle of the head.
+    this.faceCenter.z = face.mesh.hasHead ? faceDepth * 0.55 + ((box.max.z + box.min.z) / 2) * 0.45 : faceDepth;
     for (const inst of [this.after, this.before]) {
       inst.material.uniforms.uRevealRange.value.set(box.max.y + 0.5, box.min.y - 0.5);
     }
 
-    this.wire = createWireframe(face.wire, this.renderer.getPixelRatio());
+    this.wire = createWireframe(face.wire, this.renderer.getPixelRatio(), !face.mesh.hasHead);
     this.root.add(this.wire.group);
 
     this.view = { yaw: 0, pitch: 0, zoom: 1, target: this.faceCenter.clone() };
@@ -214,7 +221,7 @@ export class FaceRenderer {
     if (force || shapeKeysDiffer(prev, values)) {
       const pos = inst.positions.array as Float32Array;
       face.model.apply(values, pos);
-      computeVertexNormals(pos, face.mesh.indices, inst.normals.array as Float32Array);
+      computeVertexNormals(pos, face.mesh.indices, inst.normals.array as Float32Array, face.mesh.weld);
       inst.positions.needsUpdate = true;
       inst.normals.needsUpdate = true;
     }

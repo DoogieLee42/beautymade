@@ -55,6 +55,8 @@ export interface FaceMeshData {
   uvs: number[];
   indices: number[];
   landmarkCount: number;
+  /** Full-head models: how the head shell (the vertices after the landmarks) joins the face. */
+  head?: { oval: number[]; rim: number[]; ringUvs: number[]; weld: number[] } | null;
 }
 
 /** Texture sources are http(s) URLs or data: URLs (the bundled demo face). */

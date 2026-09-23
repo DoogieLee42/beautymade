@@ -124,7 +124,7 @@ const fragmentShader = /* glsl */ `
     if (uReveal < 1.0) {
       float lineY = mix(uRevealRange.x, uRevealRange.y, uReveal);
       float d = vObjPos.y - lineY;
-      vec2 grid = abs(fract(vUv * 72.0) - 0.5);
+      vec2 grid = abs(fract(vec2(vObjPos.x + vObjPos.z * 0.6, vObjPos.y) * 1.1) - 0.5);
       float wire = 1.0 - smoothstep(0.0, 0.06, min(grid.x, grid.y));
       vec3 scanned = mix(bg, uAccent, wire * 0.55 + 0.08);
       float band = exp(-abs(d) * 3.5);

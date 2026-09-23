@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Generates the bundled demo face used by the app before a user has scanned (and in
-demo mode): the canonical MediaPipe face as a porcelain sculpture (the app lights it
-like a studio bust). It is intentionally stylised rather than a real person.
+demo mode): the canonical MediaPipe face on the head template, as a porcelain bust (the
+app lights it like a studio sculpture). It is intentionally stylised rather than a real
+person.
 
 Usage (from services/api):  .venv/bin/python scripts/make_demo_face.py [out_dir]
 """
@@ -19,16 +20,18 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.reconstruction.head import fit_head  # noqa: E402
+from app.reconstruction.pipeline import _mesh_payload  # noqa: E402
 from app.reconstruction.texture import (  # noqa: E402
     AtlasRaster,
     atlas_uvs,
+    head_skin_mask,
     mean_skin_color,
     skin_mask,
     smooth_skin,
     uv_to_pixels,
 )
 from app.reconstruction.topology import (  # noqa: E402
-    LANDMARK_COUNT,
     LEFT_BROW,
     LEFT_EYE,
     LIPS_OUTER,
@@ -47,6 +50,7 @@ BLUSH = np.array([232, 212, 206], np.float32)
 LIP = np.array([214, 184, 180], np.float32)
 BROW = np.array([192, 180, 172], np.float32)
 LASH = np.array([150, 136, 130], np.float32)
+HAIR = np.array([212, 203, 196], np.float32)  # a hint of sculpted hair on the scalp
 
 
 def _soft_polygon(points: np.ndarray, blur: float, dilate: int = 0) -> np.ndarray:
@@ -92,27 +96,37 @@ def paint_albedo() -> np.ndarray:
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
+def paint_head(head) -> np.ndarray:
+    """Porcelain for the head chart, slightly deeper where hair would be."""
+    raster = AtlasRaster(SIZE, head.head_uvs, head.head_triangles)
+    hair = raster.scatter(raster.interpolate(head.hair).astype(np.float32))
+    rng = np.random.default_rng(11)
+    noise = cv2.GaussianBlur(rng.normal(0, 1, (SIZE, SIZE)).astype(np.float32), (0, 0), 18)
+    noise = (noise / (np.abs(noise).max() + 1e-6))[..., None]
+    img = BASE * (1 - hair[..., None] * 0.6) + HAIR * (hair[..., None] * 0.6) + noise * (2 + 4 * hair[..., None])
+    img[~raster.coverage] = BASE
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
 def main() -> None:
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUT
     out.mkdir(parents=True, exist_ok=True)
     face = canonical_face()
-    albedo = paint_albedo()
-    raster = AtlasRaster(SIZE)
-    albedo[~raster.coverage] = BASE.astype(np.uint8)
-    mask = skin_mask(512)
-    smooth = smooth_skin(albedo, 512)
+    head = fit_head(face.positions)
+    face_albedo = paint_albedo()
+    face_albedo[~AtlasRaster(SIZE).coverage] = BASE.astype(np.uint8)
+    albedo = np.concatenate([face_albedo, paint_head(head)], axis=1)
+    face_mask = skin_mask(512)
+    mask = np.concatenate([face_mask, head_skin_mask(512, head.head_uvs, head.head_triangles, head.hair)], axis=1)
+    smooth = smooth_skin(albedo, (1024, 512))
 
     model = {
         "format": "beautymade.face-model",
-        "version": 1,
-        "mesh": {
-            "positions": [round(float(x), 4) for x in face.positions.reshape(-1)],
-            "uvs": [round(float(x), 5) for x in atlas_uvs().reshape(-1)],
-            "indices": face.triangles.reshape(-1).tolist(),
-            "landmarkCount": LANDMARK_COUNT,
-        },
+        "version": 2,
+        "mesh": _mesh_payload(head),
         "atlasSize": SIZE,
-        "skinTone": mean_skin_color(albedo, mask),
+        "atlas": {"width": albedo.shape[1], "height": albedo.shape[0]},
+        "skinTone": mean_skin_color(face_albedo, face_mask),
     }
     (out / "model.json").write_text(json.dumps(model, separators=(",", ":")))
 

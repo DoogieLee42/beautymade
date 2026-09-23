@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..deps import DbDep, Services, ServicesDep, UserDep
 from ..models import FaceModel, Look, Scan
-from ..schemas import FaceModelOut, FaceModelSummaryOut, MeshOut, TexturesOut
+from ..schemas import FaceModelOut, FaceModelSummaryOut, HeadShellOut, MeshOut, TexturesOut
 
 router = APIRouter(prefix="/face-models", tags=["face models"])
 
@@ -40,6 +40,7 @@ def full_out(svc: Services, face: FaceModel) -> FaceModelOut:
             uvs=mesh["uvs"],
             indices=mesh["indices"],
             landmark_count=mesh["landmarkCount"],
+            head=HeadShellOut.model_validate(mesh["head"]) if mesh.get("head") else None,
         ),
         textures=TexturesOut(
             albedo=storage.url(f"{prefix}/albedo.jpg"),

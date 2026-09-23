@@ -110,11 +110,21 @@ class ScanOut(Schema):
 # -- face models -----------------------------------------------------------------------------
 
 
+class HeadShellOut(Schema):
+    """How the app stitches the face to the head shell (see app/reconstruction/head.py)."""
+
+    oval: list[int]
+    rim: list[int]
+    ring_uvs: list[float]
+    weld: list[int]
+
+
 class MeshOut(Schema):
     positions: list[float]
     uvs: list[float]
     indices: list[int]
     landmark_count: int
+    head: HeadShellOut | None = None
 
 
 class TexturesOut(Schema):

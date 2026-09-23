@@ -37,10 +37,19 @@ def test_full_scan_to_face_model(client: TestClient, auth: dict) -> None:
 
     face = client.get("/face-models/current", headers=auth).json()
     assert face["id"] == done["faceModelId"]
-    assert len(face["mesh"]["positions"]) == 468 * 3
-    assert len(face["mesh"]["uvs"]) == 468 * 2
-    assert len(face["mesh"]["indices"]) == 898 * 3
-    assert face["mesh"]["landmarkCount"] == 468
+    # Face landmarks first, then the head shell the app stitches on.
+    mesh = face["mesh"]
+    vertex_count = len(mesh["positions"]) // 3
+    assert vertex_count > 468 + 1000
+    assert len(mesh["uvs"]) == vertex_count * 2
+    assert len(mesh["indices"]) % 3 == 0 and len(mesh["indices"]) > 898 * 3
+    assert max(mesh["indices"]) < vertex_count
+    assert mesh["landmarkCount"] == 468
+    head = mesh["head"]
+    assert len(head["oval"]) == 36 and len(head["ringUvs"]) == 72
+    assert all(468 <= v < vertex_count for v in head["rim"] + head["weld"])
+    uvs = np.array(mesh["uvs"]).reshape(-1, 2)
+    assert uvs[:468, 0].max() <= 0.5 < uvs[468:, 0].min()  # face chart left, head chart right
     assert set(face["quality"]["viewsUsed"]) == {"front", "left", "right"}
     assert face["atlasSize"] in (1024, 2048)
     assert len(face["skinTone"]) == 3
@@ -56,6 +65,8 @@ def test_full_scan_to_face_model(client: TestClient, auth: dict) -> None:
         assert img.headers["content-type"] == "image/jpeg"
         decoded = cv2.imdecode(np.frombuffer(img.content, np.uint8), cv2.IMREAD_COLOR)
         assert decoded is not None and decoded.shape[0] >= 512
+        if url != face["thumbnailUrl"]:
+            assert decoded.shape[1] == 2 * decoded.shape[0]  # two square charts
     assert client.get(face["textures"]["mask"]).headers["content-type"] == "image/png"
 
     me = client.get("/me", headers=auth).json()

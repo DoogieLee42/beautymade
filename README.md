@@ -40,7 +40,7 @@ API 서버(`:8000`)와 웹 앱(`:8081`)이 함께 뜨고 브라우저가 열립�
 개발자 도구에서 모바일 화면(예: iPhone 14, 390×844)으로 보면 디자인과 같은 비율로 보입니다.
 
 - 촬영 화면에서 노트북 카메라를 쓸 수 있고, **앨범에서 가져오기**로 정면 · 왼쪽 · 오른쪽 사진 파일을 올려도 됩니다.
-- 첫 스캔 때 서버가 얼굴 인식 모델(약 4MB)을 한 번 내려받아서 조금 더 걸려요.
+- 첫 스캔 때 서버가 얼굴 인식 · 머리카락 분리 모델(합쳐서 약 20MB)을 한 번 내려받아서 조금 더 걸려요.
 
 ### 4. 폰에서 보기 (Expo Go)
 
@@ -98,4 +98,8 @@ API는 `BM_` 접두사 환경 변수(또는 `services/api/.env`)로 설정합니
 원본 사진과 3D 얼굴은 로그인한 계정에만 저장됩니다. 파일 URL은 서명된 링크로만 내려가고, 프로필에서
 얼굴 데이터나 계정을 삭제하면 서버의 사진 · 3D 모델 · 룩이 함께 지워집니다.
 
-얼굴 인식에는 Google MediaPipe Face Landmarker(Apache-2.0)를 사용합니다.
+## 사용한 외부 자료
+
+- 얼굴 인식 · 머리카락/피부 분리: Google MediaPipe Face Landmarker, Selfie Multiclass Segmenter (Apache-2.0)
+- 머리 · 귀 · 목 형태: MakeHuman hm08 기본 메시 (CC0). `services/api/scripts/build_head_template.py`가
+  원본을 내려받아(SHA-256 고정) 얼굴 부분을 잘라내고 `head_template.npz`로 만들어요.

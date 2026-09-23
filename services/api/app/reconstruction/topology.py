@@ -102,7 +102,13 @@ def vertex_normals(positions: np.ndarray, triangles: np.ndarray) -> np.ndarray:
 def triangle_adjacency(triangles: np.ndarray, vertex_count: int) -> np.ndarray:
     """Boolean (T, T) matrix: triangles that share at least one vertex (including itself)."""
     t = len(triangles)
-    incidence = np.zeros((vertex_count, t), dtype=bool)
-    for k in range(3):
-        incidence[triangles[:, k], np.arange(t)] = True
-    return (incidence.T.astype(np.uint8) @ incidence.astype(np.uint8)) > 0
+    adjacency = np.zeros((t, t), dtype=bool)
+    order = np.argsort(triangles.reshape(-1), kind="stable")
+    corner_vertex = triangles.reshape(-1)[order]
+    corner_triangle = order // 3
+    starts = np.searchsorted(corner_vertex, np.arange(vertex_count + 1))
+    for v in range(vertex_count):
+        tris = corner_triangle[starts[v] : starts[v + 1]]
+        if len(tris):
+            adjacency[np.ix_(tris, tris)] = True
+    return adjacency

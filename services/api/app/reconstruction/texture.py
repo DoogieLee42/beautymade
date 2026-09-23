@@ -1,4 +1,13 @@
-"""Bakes the captured photos into one texture atlas laid out in the canonical UV space."""
+"""
+Bakes the captured photos into texture charts.
+
+A chart is a square region of the texture with its own UV layout: the face chart uses the
+canonical MediaPipe layout, the head chart the layout of the head template. Every chart is
+baked the same way: each photo is warped into the chart through the mesh, the best view
+per texel wins (facing the camera, unoccluded), exposure is matched between views and the
+result is merged with multi-band blending so seams disappear. The head chart also uses the
+photos' hair/skin segmentation and falls back to a shaded fill colour where no photo sees it.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +16,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from .segmenter import BODY_SKIN, FACE_SKIN, HAIR
 from .topology import (
     LEFT_BROW,
     LEFT_EYE,
@@ -19,20 +29,49 @@ from .topology import (
 )
 
 ATLAS_MARGIN = 0.02
+FILL_SCORE = 0.035  # a photo that sees the surface at ~70 degrees or better beats the fill colour
+FILL_LIGHT = np.array([0.2, 0.45, 0.87]) / np.linalg.norm([0.2, 0.45, 0.87])
 
 
 @dataclass
 class ViewTexture:
     name: str
     image: np.ndarray  # RGB uint8
-    pixels: np.ndarray  # (468, 2) landmark positions in image pixels
+    pixels: np.ndarray  # (V, 2) every mesh vertex in image pixels
     toward_camera: np.ndarray  # (3,) unit vector from the face towards this camera, face frame
-    depth: np.ndarray  # (468,) distance towards the camera, larger = nearer
+    depth: np.ndarray  # (V,) distance towards the camera, larger = nearer
     preference: float = 1.0
+    segmentation: np.ndarray | None = None  # (H, W) selfie segmenter categories
+
+
+@dataclass
+class BakeMesh:
+    """The whole mesh, used for occlusion and shading while baking any chart."""
+
+    triangles: np.ndarray  # (T, 3)
+    normals: np.ndarray  # (V, 3)
+    adjacency: np.ndarray  # (T, T) triangles sharing a (welded) vertex
+
+
+@dataclass
+class HeadFill:
+    """How the head chart treats hair, and what it shows where no photo sees the surface."""
+
+    hair: np.ndarray  # (V,) 1 where hair grows
+    hair_allowed: np.ndarray  # (V,) where photo pixels of hair may be used
+    skin_rgb: np.ndarray  # (3,) 0-255
+    hair_rgb: np.ndarray  # (3,) 0-255
+
+
+@dataclass
+class Chart:
+    uvs: np.ndarray  # (V, 2) chart UVs in [0, 1]² (rows of other charts are ignored)
+    triangles: np.ndarray  # (Tc,) indices into BakeMesh.triangles
+    fill: HeadFill | None = None
 
 
 def atlas_uvs() -> np.ndarray:
-    """UVs used by generated models: the canonical layout with a small padding margin."""
+    """Face-chart UVs: the canonical layout with a small padding margin."""
     return ATLAS_MARGIN + (1 - 2 * ATLAS_MARGIN) * canonical_face().uvs
 
 
@@ -41,13 +80,15 @@ def uv_to_pixels(uvs: np.ndarray, size: int) -> np.ndarray:
 
 
 class AtlasRaster:
-    """Which triangle covers each atlas texel, and where inside it (barycentric)."""
+    """Which triangle covers each chart texel, and where inside it (barycentric)."""
 
-    def __init__(self, size: int) -> None:
-        face = canonical_face()
+    def __init__(self, size: int, uvs: np.ndarray | None = None, triangles: np.ndarray | None = None) -> None:
+        # Defaults to the canonical face chart.
+        if uvs is None or triangles is None:
+            uvs, triangles = atlas_uvs(), canonical_face().triangles
         self.size = size
-        self.triangles = face.triangles
-        uv_px = uv_to_pixels(atlas_uvs(), size)
+        self.triangles = triangles
+        uv_px = uv_to_pixels(uvs, size)
         ids = np.zeros((size, size), dtype=np.uint16)
         shift = 4
         for t, tri in enumerate(self.triangles):
@@ -91,12 +132,14 @@ def _barycentric(p: np.ndarray, verts: np.ndarray, tris: np.ndarray) -> np.ndarr
     return bary / bary.sum(1, keepdims=True)
 
 
-def _visibility(view: ViewTexture, raster: AtlasRaster, map_xy: np.ndarray, adjacency: np.ndarray) -> np.ndarray:
+def _visibility(
+    view: ViewTexture, mesh: BakeMesh, raster: AtlasRaster, map_xy: np.ndarray, chart_triangles: np.ndarray
+) -> np.ndarray:
     """Z-buffer test: a texel is visible if the front-most triangle at its image position is (next to) its own."""
     h, w = view.image.shape[:2]
     down = 2
     ids = np.zeros((h // down + 1, w // down + 1), dtype=np.uint16)
-    tris = raster.triangles
+    tris = mesh.triangles
     order = np.argsort(view.depth[tris].mean(1))  # far to near; nearer triangles overwrite
     shift = 3
     for t in order:
@@ -105,34 +148,42 @@ def _visibility(view: ViewTexture, raster: AtlasRaster, map_xy: np.ndarray, adja
     px = np.clip((map_xy[:, 0] / down).astype(np.int32), 0, ids.shape[1] - 1)
     py = np.clip((map_xy[:, 1] / down).astype(np.int32), 0, ids.shape[0] - 1)
     front = ids[py, px].astype(np.int32) - 1
+    own = chart_triangles[raster.tri_id]
     visible = np.zeros(len(front), dtype=bool)
     hit = front >= 0
-    visible[hit] = adjacency[raster.tri_id[hit], front[hit]]
+    visible[hit] = mesh.adjacency[own[hit], front[hit]]
     return visible
 
 
 @dataclass
 class BakeResult:
     albedo: np.ndarray  # RGB uint8 (size, size, 3)
-    weights: dict[str, float]  # share of the atlas each view contributed
+    weights: dict[str, float]  # share of the chart each view (and the fill) contributed
+    coverage: np.ndarray  # (size, size) bool, texels covered by the chart's triangles
 
 
 def bake_atlas(views: list[ViewTexture], normals: np.ndarray, size: int) -> BakeResult:
-    """
-    Warps every photo into the atlas (piecewise-affine per triangle, via the landmarks),
-    picks the best view per texel (facing the camera, unoccluded), equalises exposure
-    between views and merges them with multi-band blending so seams disappear.
-    """
-    raster = AtlasRaster(size)
+    """Face chart only, in the canonical layout (face-only models)."""
     face = canonical_face()
-    adjacency = triangle_adjacency(face.triangles, len(face.positions))
+    mesh = BakeMesh(face.triangles, normals, triangle_adjacency(face.triangles, len(face.positions)))
+    return bake_chart(views, mesh, Chart(uvs=atlas_uvs(), triangles=np.arange(len(face.triangles))), size)
+
+
+def bake_chart(views: list[ViewTexture], mesh: BakeMesh, chart: Chart, size: int) -> BakeResult:
+    """Warps every photo into the chart and merges the views (see the module docstring)."""
+    tris = mesh.triangles[chart.triangles]
+    raster = AtlasRaster(size, chart.uvs, tris)
     n = len(raster.tri_id)
+    hair_weight = raster.interpolate(chart.fill.hair) if chart.fill is not None else None
+    hair_ok = raster.interpolate(chart.fill.hair_allowed.astype(np.float64)) >= 0.5 if chart.fill is not None else None
+    # The face alone never occludes itself from a single frontal photo; the head does.
+    check_visibility = len(views) > 1 or chart.fill is not None
 
     samples, scores = [], []
     for view in views:
         map_xy = raster.interpolate(view.pixels).astype(np.float32)
         h, w = view.image.shape[:2]
-        # Landmark pixels are continuous coordinates; OpenCV samples pixel centres at integers.
+        # Pixel coordinates are continuous; OpenCV samples pixel centres at integers.
         warped = cv2.remap(
             view.image,
             raster.scatter(map_xy[:, 0] - 0.5, fill=-1.0),
@@ -141,17 +192,24 @@ def bake_atlas(views: list[ViewTexture], normals: np.ndarray, size: int) -> Bake
             borderMode=cv2.BORDER_REPLICATE,
         )
         colors = warped[raster.texel_y, raster.texel_x]
-        facing = np.clip(raster.interpolate(normals @ view.toward_camera), 0, 1)
+        facing = np.clip(raster.interpolate(mesh.normals @ view.toward_camera), 0, 1)
         inside = (map_xy[:, 0] >= 1) & (map_xy[:, 0] < w - 1) & (map_xy[:, 1] >= 1) & (map_xy[:, 1] < h - 1)
-        visible = _visibility(view, raster, map_xy, adjacency) if len(views) > 1 else np.ones(n, bool)
+        visible = _visibility(view, mesh, raster, map_xy, chart.triangles) if check_visibility else np.ones(n, bool)
         score = (facing**3) * view.preference * inside * visible
+        if hair_ok is not None and view.segmentation is not None:
+            seg = view.segmentation
+            cls = seg[
+                np.clip(map_xy[:, 1].astype(np.int32), 0, seg.shape[0] - 1),
+                np.clip(map_xy[:, 0].astype(np.int32), 0, seg.shape[1] - 1),
+            ]
+            # Background, clothes and accessories never belong on the head; hair only above the ears.
+            allowed = (cls == BODY_SKIN) | (cls == FACE_SKIN) | ((cls == HAIR) & hair_ok)
+            score = score * allowed
         samples.append(colors.astype(np.float32))
         scores.append(score)
 
     scores_arr = np.stack(scores)  # (V, N)
     samples_arr = np.stack(samples)  # (V, N, 3)
-    best = scores_arr.argmax(0)
-    best[scores_arr.max(0) <= 1e-6] = 0  # nothing sees it well: fall back to the front photo
 
     # Exposure / white balance: match every view to the front photo on shared, well-seen texels.
     for v in range(1, len(views)):
@@ -160,13 +218,40 @@ def bake_atlas(views: list[ViewTexture], normals: np.ndarray, size: int) -> Bake
             gain = np.median(samples_arr[0][both], 0) / np.maximum(np.median(samples_arr[v][both], 0), 1)
             samples_arr[v] *= np.clip(gain, 0.7, 1.4)
 
-    albedo = _multiband_blend(raster, samples_arr, best, len(views))
+    names = [view.name for view in views]
+    fallback = 0  # the front photo
+    if chart.fill is not None and hair_weight is not None:
+        samples_arr = np.concatenate([samples_arr, _fill_samples(raster, mesh, chart.fill, hair_weight)[None]])
+        scores_arr = np.concatenate([scores_arr, np.full((1, n), FILL_SCORE)])
+        names.append("fill")
+        fallback = len(views)
+
+    best = scores_arr.argmax(0)
+    best[scores_arr.max(0) <= 1e-6] = fallback
+
+    albedo = _multiband_blend(raster, samples_arr, best, len(names), fallback)
     albedo = _fill_background(albedo, raster.coverage)
-    share = {view.name: float((best == i).mean()) for i, view in enumerate(views)}
-    return BakeResult(albedo=albedo, weights=share)
+    share = {name: float((best == i).mean()) for i, name in enumerate(names)}
+    return BakeResult(albedo=albedo, weights=share, coverage=raster.coverage)
 
 
-def _multiband_blend(raster: AtlasRaster, samples: np.ndarray, best: np.ndarray, count: int) -> np.ndarray:
+def _fill_samples(raster: AtlasRaster, mesh: BakeMesh, fill: HeadFill, hair_weight: np.ndarray) -> np.ndarray:
+    """Skin or hair colour with soft frontal shading baked in (the photos carry their own lighting)."""
+    normals = raster.interpolate(mesh.normals)
+    normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-9)
+    shade = 0.58 + 0.42 * np.clip(normals @ FILL_LIGHT, 0, 1)
+    base = fill.skin_rgb[None] * (1 - hair_weight[:, None]) + fill.hair_rgb[None] * hair_weight[:, None]
+    # A little low-frequency variation so the hair does not read as a plastic helmet.
+    rng = np.random.default_rng(3)
+    noise = cv2.GaussianBlur(rng.normal(0, 1, (raster.size, raster.size)).astype(np.float32), (0, 0), raster.size / 180)
+    noise = noise[raster.texel_y, raster.texel_x] / (np.abs(noise).max() + 1e-6)
+    variation = 1 + noise * (0.03 + 0.06 * hair_weight)
+    return (base * (shade * variation)[:, None]).astype(np.float32)
+
+
+def _multiband_blend(
+    raster: AtlasRaster, samples: np.ndarray, best: np.ndarray, count: int, outside: int = 0
+) -> np.ndarray:
     size = raster.size
     if count == 1:
         return np.clip(raster.scatter(samples[0]), 0, 255).astype(np.uint8)
@@ -176,8 +261,8 @@ def _multiband_blend(raster: AtlasRaster, samples: np.ndarray, best: np.ndarray,
     for v in range(count):
         img = raster.scatter(samples[v])
         img = _fill_background(np.clip(img, 0, 255).astype(np.uint8), raster.coverage).astype(np.float32)
-        # Texels outside the face belong to the front photo so every pyramid level has weight.
-        mask = raster.scatter((best == v).astype(np.float32), fill=1.0 if v == 0 else 0.0)
+        # Texels outside the chart belong to one view so every pyramid level has weight.
+        mask = raster.scatter((best == v).astype(np.float32), fill=1.0 if v == outside else 0.0)
         lap = _laplacian_pyramid(img, levels)
         gauss = _gaussian_pyramid(mask, levels)
         if blended_pyr is None:
@@ -235,7 +320,7 @@ def _fill_background(img: np.ndarray, coverage: np.ndarray) -> np.ndarray:
 
 
 def skin_mask(size: int) -> np.ndarray:
-    """Soft mask of skin in atlas space (no eyes, brows or lips), uint8."""
+    """Soft mask of skin in the face chart (no eyes, brows or lips), uint8."""
     uv_px = uv_to_pixels(atlas_uvs(), size)
     raster = AtlasRaster(size)
     mask = raster.coverage.astype(np.uint8) * 255
@@ -253,14 +338,26 @@ def skin_mask(size: int) -> np.ndarray:
     return cv2.GaussianBlur(mask, (blur, blur), 0)
 
 
-def smooth_skin(albedo: np.ndarray, size: int) -> np.ndarray:
-    """Edge-preserving smoothed version of the atlas, used by the skin-smoothing slider."""
-    img = cv2.resize(albedo, (size, size), interpolation=cv2.INTER_AREA) if albedo.shape[0] != size else albedo
+def head_skin_mask(size: int, uvs: np.ndarray, triangles: np.ndarray, hair: np.ndarray) -> np.ndarray:
+    """Soft mask of skin in the head chart (everything but the scalp), uint8."""
+    raster = AtlasRaster(size, uvs, triangles)
+    skin = raster.scatter(((1 - raster.interpolate(hair)) * 255).astype(np.float32))
+    mask = _fill_background(np.repeat(skin[..., None], 3, 2).astype(np.uint8), raster.coverage)[..., 0]
+    blur = max(3, int(size * 0.01)) | 1
+    return cv2.GaussianBlur(mask, (blur, blur), 0)
+
+
+def smooth_skin(albedo: np.ndarray, size: int | tuple[int, int]) -> np.ndarray:
+    """Edge-preserving smoothed version of the texture, used by the skin-smoothing slider."""
+    width, height = (size, size) if isinstance(size, int) else size
+    img = albedo
+    if albedo.shape[:2] != (height, width):
+        img = cv2.resize(albedo, (width, height), interpolation=cv2.INTER_AREA)
     out = img
     for _ in range(2):
-        out = cv2.bilateralFilter(out, d=0, sigmaColor=22, sigmaSpace=max(3, size // 160))
+        out = cv2.bilateralFilter(out, d=0, sigmaColor=22, sigmaSpace=max(3, height // 160))
     # Blend in a gentle low-pass to even out blotches that survive the bilateral filter.
-    low = cv2.GaussianBlur(out, (0, 0), sigmaX=size / 220)
+    low = cv2.GaussianBlur(out, (0, 0), sigmaX=height / 220)
     return cv2.addWeighted(out, 0.7, low, 0.3, 0)
 
 

@@ -127,8 +127,15 @@ function wireMaterial(points: boolean, opacity: number, pointSize: number): THRE
   });
 }
 
-/** Glowing white wireframe head: face edges, vertex dots and a head/neck lattice. */
-export function createWireframe(wire: WireMesh, pixelRatio: number): { group: THREE.Group; dispose(): void; setDepthRange(near: number, far: number): void } {
+/**
+ * Glowing white wireframe head: mesh edges and vertex dots. Face-only models get a
+ * stand-in lattice for the back of the head and the neck (`withShell`).
+ */
+export function createWireframe(
+  wire: WireMesh,
+  pixelRatio: number,
+  withShell = true,
+): { group: THREE.Group; dispose(): void; setDepthRange(near: number, far: number): void } {
   const group = new THREE.Group();
 
   const faceGeometry = new THREE.BufferGeometry();
@@ -137,7 +144,7 @@ export function createWireframe(wire: WireMesh, pixelRatio: number): { group: TH
   const faceLines = new THREE.LineSegments(faceGeometry, wireMaterial(false, 0.34, 1));
   const faceDots = new THREE.Points(faceGeometry, wireMaterial(true, 0.9, 3.2 * pixelRatio));
 
-  const shell = headShell();
+  const shell = withShell ? headShell() : { points: [], segments: [] };
   const shellGeometry = new THREE.BufferGeometry();
   shellGeometry.setAttribute('position', new THREE.Float32BufferAttribute(shell.points, 3));
   shellGeometry.setIndex(shell.segments);

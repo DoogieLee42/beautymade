@@ -3,15 +3,20 @@ Photos -> 3D face model.
 
   1. analyse    MediaPipe landmarks + pose/quality per photo
   2. shape      rigidly align the views and fuse their landmarks into one 3D shape
-  3. texture    bake all photos into a UV atlas (visibility-aware, multi-band blended)
-  4. finish     skin mask, smoothed skin texture, thumbnail, model.json
+  3. head       fit the head template (skull, ears, neck) around the fused face
+  4. texture    bake the photos into a face chart and a head chart (visibility-aware,
+                multi-band blended; the head uses hair/skin segmentation)
+  5. finish     skin mask, smoothed skin texture, thumbnail, model.json
 
-The mobile app subdivides the 468-landmark mesh and applies the beauty deformations
-on-device, so this service only has to produce the base mesh and textures.
+The texture is two square charts side by side: the face (canonical MediaPipe layout) on
+the left, the rest of the head on the right. The mobile app subdivides the face, stitches
+it to the head and applies the beauty deformations on-device, so this service only has
+to produce the base mesh and textures.
 """
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -20,20 +25,29 @@ import cv2
 import numpy as np
 
 from .geometry import ViewGeometry, fuse_views, head_pose, to_camera_space
+from .head import HeadMesh, fit_head
 from .landmarker import FaceLandmarker, shared_landmarker
 from .quality import VIEWS, PhotoAnalysis, View, analyze_photo
+from .segmenter import HAIR, SelfieSegmenter, shared_segmenter
 from .texture import (
+    BakeMesh,
+    Chart,
+    HeadFill,
     ViewTexture,
     atlas_uvs,
-    bake_atlas,
+    bake_chart,
+    head_skin_mask,
     mean_skin_color,
     skin_mask,
     smooth_skin,
 )
-from .topology import LANDMARK_COUNT, canonical_face, vertex_normals
+from .topology import LANDMARK_COUNT, triangle_adjacency
+
+log = logging.getLogger(__name__)
 
 MODEL_FORMAT = "beautymade.face-model"
-MODEL_VERSION = 1
+MODEL_VERSION = 2
+CHART_SIZE = 1024  # each chart; the texture is two charts wide
 
 ProgressFn = Callable[[float, str], None]
 
@@ -65,6 +79,7 @@ def reconstruct(
     photos: dict[View, np.ndarray],
     progress: ProgressFn = _noop,
     landmarker: FaceLandmarker | None = None,
+    segmenter: SelfieSegmenter | None = None,
 ) -> ReconstructionResult:
     """Builds a face model from RGB photos keyed by view. Only the front view is required."""
     started = time.perf_counter()
@@ -96,35 +111,63 @@ def reconstruct(
     positions = fused.positions
     progress(0.5, "shaping")
 
-    # 3. texture ----------------------------------------------------------------------------
-    progress(0.55, "texturing")
-    face = canonical_face()
-    normals = vertex_normals(positions, face.triangles)
-    front_analysis = analyses["front"]
-    face_width_px = front_analysis.face_box[2] * front_analysis.width if front_analysis.face_box else 0
-    atlas_size = 2048 if face_width_px > 900 else 1024
+    # 3. head -------------------------------------------------------------------------------
+    head = fit_head(positions)
+    progress(0.55, "shaping")
+
+    # 4. texture ----------------------------------------------------------------------------
+    progress(0.58, "texturing")
+    segmentation = _segment({v: photos[v] for v in analyses}, segmenter)
+    rep = head.representative()
+    triangles = head.triangles
+    mesh = BakeMesh(
+        triangles=triangles,
+        normals=head.normals(),
+        adjacency=triangle_adjacency(rep[triangles], len(head.positions)),
+    )
     view_textures = []
     for geom in fused.views:
         a = analyses[geom.name]  # type: ignore[index]
-        lm = a.detection.landmarks[:LANDMARK_COUNT]  # type: ignore[union-attr]
-        camera_space = geom.to_face.invert(positions)
+        landmark_px = a.detection.landmarks[:LANDMARK_COUNT, :2] * [a.width, a.height]  # type: ignore[union-attr]
+        camera_space = geom.to_face.invert(head.positions)
         view_textures.append(
             ViewTexture(
                 name=geom.name,
                 image=photos[geom.name],  # type: ignore[index]
-                pixels=np.stack([lm[:, 0] * a.width, lm[:, 1] * a.height], axis=1),
+                pixels=_vertex_pixels(head, landmark_px, camera_space),
                 toward_camera=geom.to_face.rotation[:, 2],
                 depth=camera_space[:, 2],
                 preference=2.0 if geom.name == "front" else 1.0,
+                segmentation=segmentation.get(geom.name),  # type: ignore[arg-type]
             )
         )
-    baked = bake_atlas(view_textures, normals, atlas_size)
+    front_analysis = analyses["front"]
+
+    n_face = len(head.face_triangles)
+    face_uvs = np.zeros((len(head.positions), 2))
+    face_uvs[:LANDMARK_COUNT] = atlas_uvs()
+    face_bake = bake_chart(view_textures, mesh, Chart(uvs=face_uvs, triangles=np.arange(n_face)), CHART_SIZE)
+    progress(0.75, "texturing")
+
+    face_mask = skin_mask(CHART_SIZE // 2)
+    skin_rgb = np.asarray(mean_skin_color(face_bake.albedo, face_mask)) * 255
+    hair_rgb = _hair_color(photos["front"], segmentation.get("front"), front_analysis, skin_rgb)
+    head_chart = Chart(
+        uvs=head.head_uvs,
+        triangles=np.arange(n_face, len(triangles)),
+        fill=HeadFill(hair=head.hair, hair_allowed=head.hair_allowed, skin_rgb=skin_rgb, hair_rgb=hair_rgb),
+    )
+    head_bake = bake_chart(view_textures, mesh, head_chart, CHART_SIZE)
+    albedo = np.concatenate([face_bake.albedo, head_bake.albedo], axis=1)
     progress(0.85, "texturing")
 
-    # 4. finish -----------------------------------------------------------------------------
+    # 5. finish -----------------------------------------------------------------------------
     progress(0.9, "finishing")
-    mask = skin_mask(512)
-    smooth = smooth_skin(baked.albedo, 1024)
+    head_tris = head.head_triangles
+    mask = np.concatenate(
+        [face_mask, head_skin_mask(CHART_SIZE // 2, head.head_uvs, head_tris, head.hair)], axis=1
+    )
+    smooth = smooth_skin(albedo, (albedo.shape[1], albedo.shape[0]))
     thumbnail = _thumbnail(photos["front"], front_analysis)
 
     views_meta = {}
@@ -134,37 +177,108 @@ def reconstruct(
             "yaw": round(pose.yaw, 1),
             "pitch": round(pose.pitch, 1),
             "roll": round(pose.roll, 1),
-            "textureShare": round(baked.weights.get(geom.name, 0.0), 3),
+            "textureShare": round(face_bake.weights.get(geom.name, 0.0), 3),
         }
     skipped = [v for v in photos if v not in analyses]
     model = {
         "format": MODEL_FORMAT,
         "version": MODEL_VERSION,
-        "mesh": {
-            "positions": [round(float(x), 4) for x in positions.reshape(-1)],
-            "uvs": [round(float(x), 5) for x in atlas_uvs().reshape(-1)],
-            "indices": face.triangles.reshape(-1).tolist(),
-            "landmarkCount": LANDMARK_COUNT,
-        },
-        "atlasSize": atlas_size,
-        "skinTone": mean_skin_color(baked.albedo, mask),
+        "mesh": _mesh_payload(head),
+        "atlasSize": CHART_SIZE,
+        "atlas": {"width": albedo.shape[1], "height": albedo.shape[0]},
+        "skinTone": [round(float(c) / 255.0, 4) for c in skin_rgb],
         "views": views_meta,
         "quality": {
             "viewsUsed": list(analyses.keys()),
             "viewsSkipped": skipped,
             "multiViewResidual": round(fused.residual, 4),
+            "headFill": round(head_bake.weights.get("fill", 0.0), 3),
         },
     }
     result = ReconstructionResult(
         model=model,
-        albedo_jpg=_encode_jpg(baked.albedo, 92),
+        albedo_jpg=_encode_jpg(albedo, 92),
         smooth_jpg=_encode_jpg(smooth, 88),
         mask_png=_encode_png(mask),
         thumbnail_jpg=_encode_jpg(thumbnail, 88),
-        stats={"seconds": round(time.perf_counter() - started, 2), "atlasSize": atlas_size},
+        stats={"seconds": round(time.perf_counter() - started, 2), "atlasSize": CHART_SIZE},
     )
     progress(1.0, "finishing")
     return result
+
+
+def face_chart_to_atlas(uvs: np.ndarray) -> np.ndarray:
+    return uvs * [0.5, 1.0]
+
+
+def head_chart_to_atlas(uvs: np.ndarray) -> np.ndarray:
+    return uvs * [0.5, 1.0] + [0.5, 0.0]
+
+
+def _mesh_payload(head: HeadMesh) -> dict:
+    """Face landmarks + head shell (the app rebuilds the face-to-head band itself)."""
+    n = head.ring_start
+    uvs = np.concatenate([face_chart_to_atlas(atlas_uvs()), head_chart_to_atlas(head.head_uvs[head.shell_start : n])])
+    shell = head.head_triangles[: head.band_start]
+    shell_info = head.shell_payload()
+    ring_uvs = head_chart_to_atlas(np.asarray(shell_info["ringUvs"]).reshape(-1, 2))
+    shell_info["ringUvs"] = [round(float(x), 5) for x in ring_uvs.reshape(-1)]
+    return {
+        "positions": [round(float(x), 4) for x in head.positions[:n].reshape(-1)],
+        "uvs": [round(float(x), 5) for x in uvs.reshape(-1)],
+        "indices": np.concatenate([head.face_triangles, shell]).reshape(-1).tolist(),
+        "landmarkCount": LANDMARK_COUNT,
+        "head": shell_info,
+    }
+
+
+def _vertex_pixels(head: HeadMesh, landmark_px: np.ndarray, camera_space: np.ndarray) -> np.ndarray:
+    """
+    Image position of every vertex. Face landmarks use what the detector saw; the head is
+    projected through the fitted pose, carrying the border's detection-vs-model offset
+    into its surroundings so the face and head textures meet without a step.
+    """
+    from .head import head_template
+
+    projected = np.stack([camera_space[:, 0], -camera_space[:, 1]], axis=1)
+    pixels = projected.copy()
+    pixels[:LANDMARK_COUNT] = landmark_px
+    oval = head_template().oval
+    residual = landmark_px[oval] - projected[oval]
+    shell = slice(head.shell_start, head.ring_start)
+    d = np.linalg.norm(head.positions[shell][:, None] - head.positions[oval][None], axis=2)
+    w = np.exp(-((d / 2.5) ** 2))
+    w /= np.maximum(w.sum(1, keepdims=True), 1e-9)
+    reach = np.clip(1 - d.min(1) / 6.0, 0, 1) ** 2
+    pixels[shell] += reach[:, None] * (w @ residual)
+    pixels[head.ring_start :] = landmark_px[oval]
+    return pixels
+
+
+def _segment(photos: dict[View, np.ndarray], segmenter: SelfieSegmenter | None) -> dict[str, np.ndarray]:
+    """Hair/skin/background per photo; an empty result just disables the head's photo filtering."""
+    try:
+        seg = segmenter or shared_segmenter()
+        return {view: seg.segment(img) for view, img in photos.items()}
+    except Exception:  # noqa: BLE001 - the head can always fall back to fill colours
+        log.exception("segmentation failed")
+        return {}
+
+
+def _hair_color(
+    rgb: np.ndarray, segmentation: np.ndarray | None, analysis: PhotoAnalysis, fallback: np.ndarray
+) -> np.ndarray:
+    """Typical hair colour around the face in the front photo (skin tone when no hair is visible)."""
+    if segmentation is None:
+        return fallback
+    h, w = rgb.shape[:2]
+    x, y, bw, bh = analysis.face_box or (0.2, 0.2, 0.6, 0.6)
+    x0, x1 = int(max(0, (x - bw * 0.6) * w)), int(min(w, (x + bw * 1.6) * w))
+    y0, y1 = int(max(0, (y - bh * 0.8) * h)), int(min(h, (y + bh * 1.2) * h))
+    region = segmentation[y0:y1, x0:x1] == HAIR
+    if region.sum() < 0.03 * region.size:
+        return fallback
+    return np.median(rgb[y0:y1, x0:x1][region], 0).astype(np.float64)
 
 
 def _thumbnail(rgb: np.ndarray, analysis: PhotoAnalysis, size: int = 512) -> np.ndarray:
