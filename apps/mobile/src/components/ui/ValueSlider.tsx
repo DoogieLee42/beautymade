@@ -1,7 +1,7 @@
-import { formatValue } from '@beautymade/face-engine';
+import { formatDecimal } from '@beautymade/face-engine';
 import * as Haptics from 'expo-haptics';
 import { useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import { colors } from '../../theme';
@@ -11,15 +11,13 @@ interface ValueSliderProps {
   value: number;
   min: number;
   max: number;
-  minLabel?: string;
-  maxLabel?: string;
   onChange(value: number): void;
   onStart?(): void;
   onEnd?(value: number): void;
   testID?: string;
 }
 
-const THUMB = 26;
+const THUMB = 18;
 const DETENT = 0.035;
 
 function tick() {
@@ -27,10 +25,10 @@ function tick() {
 }
 
 /**
- * Slider for beauty controls. Bipolar ranges (-1..1) fill from the centre, with a soft
- * detent and a haptic tick at zero; tapping the value badge resets it.
+ * Compact slider row: label, track, value. Bipolar ranges (-1..1) fill from the centre
+ * with a soft detent and haptic tick at zero; double-tap resets.
  */
-export function ValueSlider({ label, value, min, max, minLabel, maxLabel, onChange, onStart, onEnd, testID }: ValueSliderProps) {
+export function ValueSlider({ label, value, min, max, onChange, onStart, onEnd, testID }: ValueSliderProps) {
   const [width, setWidth] = useState(0);
   const last = useRef(value);
   const bipolar = min < 0;
@@ -70,32 +68,27 @@ export function ValueSlider({ label, value, min, max, minLabel, maxLabel, onChan
       onEnd?.(last.current);
     });
 
+  const reset = Gesture.Tap()
+    .runOnJS(true)
+    .numberOfTaps(2)
+    .onEnd(() => {
+      last.current = 0;
+      onStart?.();
+      onChange(0);
+      onEnd?.(0);
+    });
+
   const pos = ((value - min) / range) * width;
   const zero = ((0 - min) / range) * width;
   const fillLeft = bipolar ? Math.min(pos, zero) : 0;
   const fillWidth = bipolar ? Math.abs(pos - zero) : pos;
-  const changed = value !== 0;
 
   return (
-    <View style={styles.wrap} testID={testID}>
-      <View style={styles.header}>
-        <Text style={styles.label}>{label}</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`${label} 초기화`}
-          disabled={!changed}
-          onPress={() => {
-            last.current = 0;
-            onStart?.();
-            onChange(0);
-            onEnd?.(0);
-          }}
-          style={[styles.badge, changed && styles.badgeActive]}
-        >
-          <Text style={[styles.badgeText, changed && styles.badgeTextActive]}>{formatValue(value)}</Text>
-        </Pressable>
-      </View>
-      <GestureDetector gesture={Gesture.Exclusive(pan, tap)}>
+    <View style={styles.row} testID={testID}>
+      <Text style={styles.label} numberOfLines={1}>
+        {label}
+      </Text>
+      <GestureDetector gesture={Gesture.Exclusive(reset, pan, tap)}>
         <View
           style={styles.hit}
           onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
@@ -110,44 +103,34 @@ export function ValueSlider({ label, value, min, max, minLabel, maxLabel, onChan
           }}
         >
           <View style={styles.track} />
-          {bipolar && <View style={[styles.centerTick, { left: zero - 1 }]} />}
+          {bipolar && <View style={[styles.centerTick, { left: zero - 0.5 }]} />}
           <View style={[styles.fill, { left: fillLeft, width: fillWidth }]} />
           {width > 0 && <View style={[styles.thumb, { left: pos - THUMB / 2 }]} />}
         </View>
       </GestureDetector>
-      {(minLabel || maxLabel) && (
-        <View style={styles.ends}>
-          <Text style={styles.endText}>{minLabel}</Text>
-          <Text style={styles.endText}>{maxLabel}</Text>
-        </View>
-      )}
+      <Text style={[styles.value, value !== 0 && styles.valueOn]}>{formatDecimal(value)}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: 2 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  label: { fontSize: 15, fontWeight: '600', color: colors.ink, letterSpacing: -0.2 },
-  badge: { minWidth: 44, paddingHorizontal: 8, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceAlt },
-  badgeActive: { backgroundColor: colors.primarySoft },
-  badgeText: { fontSize: 12, fontWeight: '700', color: colors.muted, fontVariant: ['tabular-nums'] },
-  badgeTextActive: { color: colors.primaryInk },
-  hit: { height: 40, justifyContent: 'center' },
-  track: { height: 4, borderRadius: 2, backgroundColor: colors.line },
-  centerTick: { position: 'absolute', width: 2, height: 12, borderRadius: 1, backgroundColor: '#D6CDCA', top: 14 },
-  fill: { position: 'absolute', height: 4, borderRadius: 2, backgroundColor: colors.primary, top: 18 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  label: { width: 58, fontSize: 14, color: colors.inkSoft, fontWeight: '500' },
+  hit: { flex: 1, height: 36, justifyContent: 'center' },
+  track: { height: 3, borderRadius: 2, backgroundColor: '#E6E6E9' },
+  centerTick: { position: 'absolute', width: 1, height: 9, top: 13.5, backgroundColor: '#C9C9CF' },
+  fill: { position: 'absolute', height: 3, borderRadius: 2, backgroundColor: colors.ink, top: 16.5 },
   thumb: {
     position: 'absolute',
-    top: (40 - THUMB) / 2,
+    top: (36 - THUMB) / 2,
     width: THUMB,
     height: THUMB,
     borderRadius: THUMB / 2,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.06)',
-    boxShadow: '0px 2px 8px rgba(42, 26, 32, 0.22)',
+    backgroundColor: colors.ink,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    boxShadow: '0px 1px 4px rgba(0, 0, 0, 0.28)',
   },
-  ends: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -4 },
-  endText: { fontSize: 11, color: colors.muted },
+  value: { width: 36, textAlign: 'right', fontSize: 14, color: colors.muted, fontVariant: ['tabular-nums'] },
+  valueOn: { color: colors.ink, fontWeight: '600' },
 });

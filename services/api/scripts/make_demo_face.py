@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Generates the bundled demo face used by the app before a user has scanned (and in
-demo mode): the canonical MediaPipe face with a soft painted "porcelain clay" texture.
-It is intentionally stylised rather than a real person.
+demo mode): the canonical MediaPipe face as a porcelain sculpture (the app lights it
+like a studio bust). It is intentionally stylised rather than a real person.
 
 Usage (from services/api):  .venv/bin/python scripts/make_demo_face.py [out_dir]
 """
@@ -42,12 +42,11 @@ DEFAULT_OUT = ROOT / "apps" / "mobile" / "assets" / "demo-face"
 TEXTURES_TS = ROOT / "apps" / "mobile" / "src" / "three" / "demoFaceTextures.generated.ts"
 SIZE = 1024
 
-BASE = np.array([236, 214, 202], np.float32)  # porcelain
-BLUSH = np.array([226, 168, 160], np.float32)
-LIP = np.array([205, 132, 132], np.float32)
-BROW = np.array([150, 118, 104], np.float32)
-LASH = np.array([96, 72, 66], np.float32)
-IRIS = np.array([112, 86, 76], np.float32)
+BASE = np.array([238, 232, 227], np.float32)  # warm porcelain
+BLUSH = np.array([232, 212, 206], np.float32)
+LIP = np.array([214, 184, 180], np.float32)
+BROW = np.array([192, 180, 172], np.float32)
+LASH = np.array([150, 136, 130], np.float32)
 
 
 def _soft_polygon(points: np.ndarray, blur: float, dilate: int = 0) -> np.ndarray:
@@ -76,29 +75,20 @@ def paint_albedo() -> np.ndarray:
     img = np.ones((SIZE, SIZE, 3), np.float32) * BASE
     # Very subtle low-frequency tone variation so the surface does not look like plastic.
     noise = cv2.GaussianBlur(rng.normal(0, 1, (SIZE, SIZE)).astype(np.float32), (0, 0), 24)
-    img += (noise / (np.abs(noise).max() + 1e-6))[..., None] * 5
+    img += (noise / (np.abs(noise).max() + 1e-6))[..., None] * 3
 
     for apple in ([50, 101, 36, 205, 118], [280, 330, 266, 425, 347]):
         c = uv[apple].mean(0)
         blush = np.zeros((SIZE, SIZE), np.float32)
         cv2.circle(blush, tuple(np.round(c).astype(int)), int(SIZE * 0.055), 1.0, -1, cv2.LINE_AA)
-        img = _mix(img, BLUSH, cv2.GaussianBlur(blush, (0, 0), SIZE * 0.035) * 0.35)
+        img = _mix(img, BLUSH, cv2.GaussianBlur(blush, (0, 0), SIZE * 0.035) * 0.3)
 
-    img = _mix(img, LIP, _soft_polygon(uv[LIPS_OUTER], blur=2.6) * 0.62)
+    img = _mix(img, LIP, _soft_polygon(uv[LIPS_OUTER], blur=3.0) * 0.55)
     for brow in (RIGHT_BROW, LEFT_BROW):
-        img = _mix(img, BROW, _soft_polygon(uv[brow], blur=4.0, dilate=1) * 0.32)
+        img = _mix(img, BROW, _soft_polygon(uv[brow], blur=5.0, dilate=1) * 0.35)
     for eye in (RIGHT_EYE, LEFT_EYE):
-        opening = _soft_polygon(uv[eye], blur=1.4)
-        img = _mix(img, np.array([242, 234, 229], np.float32), opening * 0.55)
-        # A soft painted iris, clipped by the eyelids.
-        centre = uv[eye].mean(0)
-        height = uv[eye][:, 1].max() - uv[eye][:, 1].min()
-        iris = np.zeros((SIZE, SIZE), np.float32)
-        iris_centre = tuple(np.round(centre - [0, height * 0.08]).astype(int))
-        cv2.circle(iris, iris_centre, int(height * 0.42), 1.0, -1, cv2.LINE_AA)
-        img = _mix(img, IRIS, cv2.GaussianBlur(iris, (0, 0), 1.2) * opening * 0.85)
         upper = uv[eye[:9]]  # outer corner -> upper lid -> inner corner
-        img = _mix(img, LASH, _soft_line(upper, max(2, SIZE // 400), 1.4) * 0.6)
+        img = _mix(img, LASH, _soft_line(upper, max(2, SIZE // 420), 1.8) * 0.45)
     return np.clip(img, 0, 255).astype(np.uint8)
 
 

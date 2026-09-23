@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CATEGORIES,
   CONTROL_BY_ID,
   PRESETS,
   PRESET_BY_ID,
   applyPreset,
   describeLook,
+  formatDecimal,
   formatValue,
   interpolateValues,
   isNeutral,
   isPresetActive,
+  lookCategories,
+  presetsInCategory,
   sanitizeValues,
   suggestLookName,
   summarizeChanges,
@@ -28,17 +32,21 @@ describe('presets', () => {
   });
 
   it('merges into existing adjustments and reports as active', () => {
-    const vline = PRESET_BY_ID['v-line'];
+    const vline = PRESET_BY_ID['contour-vline'];
     const values = applyPreset({ skinGlow: 0.4 }, vline);
     expect(values.skinGlow).toBe(0.4);
-    expect(values.jawline).toBe(0.75);
+    expect(values.jawline).toBe(0.7);
     expect(isPresetActive(values, vline)).toBe(true);
     expect(isPresetActive({ ...values, jawline: 0.5 }, vline)).toBe(false);
   });
 
+  it('has three presets per category', () => {
+    for (const c of CATEGORIES) expect(presetsInCategory(c.id), c.id).toHaveLength(3);
+  });
+
   it('scales with intensity', () => {
-    const values = applyPreset({}, PRESET_BY_ID['natural-nose'], 0.5);
-    expect(values.noseBridge).toBe(0.25);
+    const values = applyPreset({}, PRESET_BY_ID['nose-defined'], 0.5);
+    expect(values.noseBridge).toBe(0.33);
   });
 });
 
@@ -69,8 +77,18 @@ describe('look values', () => {
     expect(describeLook({})).toBe('변경 없음');
   });
 
+  it('formats slider decimals and lists touched categories', () => {
+    expect(formatDecimal(0.24)).toBe('0.2');
+    expect(formatDecimal(-0.1)).toBe('-0.1');
+    expect(formatDecimal(0.01)).toBe('0');
+    expect(lookCategories({ lift: 0.5, noseTip: 0.2, skinGlow: 0 })).toEqual(['nose', 'lifting']);
+    expect(lookCategories({ chinLength: 0.3 })).toEqual(['contour']);
+  });
+
   it('suggests a name from presets or dominant changes', () => {
-    expect(suggestLookName(PRESET_BY_ID['glass-skin'].values)).toBe('물광 피부');
+    expect(suggestLookName(PRESET_BY_ID['skin-glass'].values)).toBe('물광 피부');
+    expect(suggestLookName(PRESET_BY_ID['contour-vline'].values)).toBe('갸름형 윤곽');
+    expect(suggestLookName(PRESET_BY_ID['nose-natural'].values)).toBe('자연형 코');
     expect(suggestLookName({ jawline: 0.3, noseTip: 0.5 })).toBe('코끝 높이 + 턱선');
     expect(suggestLookName({})).toBe('원본');
   });

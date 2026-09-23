@@ -3,6 +3,7 @@ import { DeformationModel, buildFaceMesh } from '@beautymade/face-engine';
 import type { FaceModel } from '../api/types';
 import type { LoadedFace } from './FaceRenderer';
 import { loadTexture } from './textureLoader';
+import { meshEdges } from './wireframe';
 
 const cache = new Map<string, Promise<LoadedFace>>();
 
@@ -32,8 +33,18 @@ async function build(face: FaceModel): Promise<LoadedFace> {
   await new Promise((r) => setTimeout(r, 0));
   const mesh = buildFaceMesh(face.mesh, { subdivisions: 2 });
   const model = new DeformationModel(mesh);
+  const coarse = buildFaceMesh(face.mesh, { subdivisions: 1 });
+  const wire = { positions: coarse.positions, edges: meshEdges(coarse.indices, coarse.vertexCount) };
   const [albedo, smooth, mask] = await texturesPromise;
-  return { id: face.id, mesh, model, textures: { albedo, smooth, mask }, skinTone: face.skinTone };
+  return {
+    id: face.id,
+    mesh,
+    wire,
+    model,
+    textures: { albedo, smooth, mask },
+    skinTone: face.skinTone,
+    lit: !!face.isDemo,
+  };
 }
 
 export function forgetFace(faceId: string): void {

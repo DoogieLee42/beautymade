@@ -1,7 +1,7 @@
 import { bump, combine, lips, type FieldFn } from './fields';
 import { REGION } from './topology/landmarks';
 
-export type CategoryId = 'nose' | 'jaw' | 'contour' | 'lips' | 'lifting' | 'skin';
+export type CategoryId = 'nose' | 'contour' | 'lips' | 'skin' | 'lifting';
 
 export type ShapeControlId =
   | 'noseBridge'
@@ -42,6 +42,8 @@ interface ControlBase {
   id: ControlId;
   category: CategoryId;
   label: string;
+  /** Compact label for slider rows (2-4 characters). */
+  short: string;
   hint: string;
   min: number;
   max: number;
@@ -73,11 +75,10 @@ export interface Category {
 
 export const CATEGORIES: readonly Category[] = [
   { id: 'nose', label: '코', description: '콧대, 코끝, 콧볼' },
-  { id: 'jaw', label: '턱', description: '턱선, 턱 길이, 턱끝' },
-  { id: 'contour', label: '윤곽', description: '광대, 이마, 관자' },
+  { id: 'contour', label: '턱/윤곽', description: '턱선, 턱끝, 광대, 이마' },
   { id: 'lips', label: '입술', description: '볼륨, 입꼬리, 너비' },
-  { id: 'lifting', label: '리프팅', description: '처짐, 앞볼, 팔자' },
   { id: 'skin', label: '피부', description: '피부결, 톤, 홍조, 윤광' },
+  { id: 'lifting', label: '리프팅', description: '처짐, 앞볼, 팔자' },
 ];
 
 const FACE: readonly number[] = [168, 1, 152];
@@ -100,6 +101,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'noseBridge',
     category: 'nose',
     label: '콧대 높이',
+    short: '콧대',
     hint: '콧대 라인을 높이거나 낮춰요',
     min: -1,
     max: 1,
@@ -113,6 +115,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'noseTip',
     category: 'nose',
     label: '코끝 높이',
+    short: '코끝',
     hint: '코끝이 앞으로 나온 정도',
     min: -1,
     max: 1,
@@ -126,6 +129,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'noseTipRotation',
     category: 'nose',
     label: '코끝 각도',
+    short: '코끝각도',
     hint: '코끝을 들어 올리거나 내려요',
     min: -1,
     max: 1,
@@ -139,6 +143,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'alarWidth',
     category: 'nose',
     label: '콧볼 너비',
+    short: '콧볼',
     hint: '콧볼을 좁히거나 넓혀요',
     min: -1,
     max: 1,
@@ -151,8 +156,9 @@ export const CONTROLS: readonly Control[] = [
   {
     kind: 'shape',
     id: 'jawline',
-    category: 'jaw',
+    category: 'contour',
     label: '턱선 (V라인)',
+    short: '턱선',
     hint: '사각턱을 갸름한 V라인으로',
     min: -1,
     max: 1,
@@ -167,8 +173,9 @@ export const CONTROLS: readonly Control[] = [
   {
     kind: 'shape',
     id: 'chinLength',
-    category: 'jaw',
+    category: 'contour',
     label: '턱 길이',
+    short: '턱 길이',
     hint: '턱 끝을 길게 또는 짧게',
     min: -1,
     max: 1,
@@ -180,8 +187,9 @@ export const CONTROLS: readonly Control[] = [
   {
     kind: 'shape',
     id: 'chinProjection',
-    category: 'jaw',
+    category: 'contour',
     label: '턱끝 돌출',
+    short: '턱끝',
     hint: '옆에서 본 턱끝 라인',
     min: -1,
     max: 1,
@@ -196,6 +204,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'cheekbone',
     category: 'contour',
     label: '광대',
+    short: '광대',
     hint: '옆광대를 줄이거나 채워요',
     min: -1,
     max: 1,
@@ -209,6 +218,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'forehead',
     category: 'contour',
     label: '이마 볼륨',
+    short: '이마',
     hint: '동그랗고 볼륨 있는 이마',
     min: -1,
     max: 1,
@@ -222,6 +232,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'temple',
     category: 'contour',
     label: '관자 볼륨',
+    short: '관자',
     hint: '꺼진 관자놀이를 채워요',
     min: -1,
     max: 1,
@@ -236,6 +247,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'lipVolume',
     category: 'lips',
     label: '입술 볼륨',
+    short: '볼륨',
     hint: '위아래 입술을 도톰하게',
     min: -1,
     max: 1,
@@ -249,6 +261,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'upperLip',
     category: 'lips',
     label: '윗입술',
+    short: '윗입술',
     hint: '윗입술만 볼륨감 있게',
     min: -1,
     max: 1,
@@ -262,6 +275,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'lipCorners',
     category: 'lips',
     label: '입꼬리',
+    short: '입꼬리',
     hint: '입꼬리를 살짝 올려요',
     min: -1,
     max: 1,
@@ -275,6 +289,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'lipWidth',
     category: 'lips',
     label: '입술 너비',
+    short: '너비',
     hint: '입 가로 길이',
     min: -1,
     max: 1,
@@ -289,6 +304,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'lift',
     category: 'lifting',
     label: '리프팅',
+    short: '리프팅',
     hint: '처진 볼과 턱선을 끌어올려요',
     min: 0,
     max: 1,
@@ -305,6 +321,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'cheekVolume',
     category: 'lifting',
     label: '앞볼 볼륨',
+    short: '앞볼',
     hint: '앞볼을 볼륨감 있게 채워요',
     min: -1,
     max: 1,
@@ -318,6 +335,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'nasolabial',
     category: 'lifting',
     label: '팔자 라인',
+    short: '팔자',
     hint: '팔자 주름 부위를 채워 매끈하게',
     min: 0,
     max: 1,
@@ -332,6 +350,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'skinSmooth',
     category: 'skin',
     label: '피부결',
+    short: '피부결',
     hint: '잡티와 요철을 매끈하게',
     min: 0,
     max: 1,
@@ -344,6 +363,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'skinTone',
     category: 'skin',
     label: '톤업',
+    short: '톤업',
     hint: '피부 톤을 화사하게',
     min: 0,
     max: 1,
@@ -356,6 +376,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'skinRedness',
     category: 'skin',
     label: '홍조 완화',
+    short: '홍조',
     hint: '붉은기를 차분하게',
     min: 0,
     max: 1,
@@ -368,6 +389,7 @@ export const CONTROLS: readonly Control[] = [
     id: 'skinGlow',
     category: 'skin',
     label: '윤광',
+    short: '윤광',
     hint: '물광처럼 촉촉한 광채',
     min: 0,
     max: 1,

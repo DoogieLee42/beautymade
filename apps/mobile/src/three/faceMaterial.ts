@@ -57,6 +57,7 @@ const fragmentShader = /* glsl */ `
   uniform float uReveal;
   uniform vec2 uRevealRange;
   uniform vec3 uAccent;
+  uniform float uLit;
 
   varying vec2 vUv;
   varying vec3 vNormalObj;
@@ -93,16 +94,22 @@ const fragmentShader = /* glsl */ `
     vec3 lifted = 1.0 - (1.0 - col) * vec3(0.78, 0.8, 0.8);
     col = mix(col, lifted, uTone * skin);
 
-    // Relative relighting (see file comment).
     vec3 n = normalize(vNormalObj);
     vec3 n0 = normalize(vNormal0Obj);
-    col *= clamp(faceShade(n) / faceShade(n0), 0.7, 1.3);
-
-    // A touch of view-dependent shading so turning the head reads as 3D.
     vec3 nv = normalize(vNormalView);
     vec3 v = normalize(-vViewPos);
     float ndv = clamp(dot(nv, v), 0.0, 1.0);
-    col *= mix(0.8, 1.0, pow(ndv, 0.7));
+    if (uLit > 0.5) {
+      // Unlit albedo (the sample face): a soft studio key + fill, like a sculpture.
+      float key = max(dot(nv, normalize(vec3(-0.5, 0.55, 0.68))), 0.0);
+      float fill = max(dot(nv, normalize(vec3(0.65, 0.05, 0.75))), 0.0);
+      col *= 0.3 + 0.66 * key + 0.2 * fill;
+    } else {
+      // Relative relighting (see file comment).
+      col *= clamp(faceShade(n) / faceShade(n0), 0.7, 1.3);
+      // A touch of view-dependent shading so turning the head reads as 3D.
+      col *= mix(0.8, 1.0, pow(ndv, 0.7));
+    }
 
     // Skin sheen: broad and subtle by default, glassy with the glow control.
     vec3 h = normalize(uKeyLight + v);
@@ -111,7 +118,7 @@ const fragmentShader = /* glsl */ `
     col += spec * vec3(1.0, 0.97, 0.95);
 
     // Soft rim light separates the face from the dark stage.
-    col += pow(1.0 - ndv, 3.0) * 0.16 * vec3(1.0, 0.9, 0.92);
+    col += pow(1.0 - ndv, 3.0) * 0.14 * vec3(1.0);
 
     // Scan reveal: above the sweep line the face is shown, below it a glowing mesh grid.
     if (uReveal < 1.0) {
@@ -135,11 +142,17 @@ export interface FaceMaterialTextures {
   mask: THREE.Texture;
 }
 
-export const STAGE_TOP = new THREE.Color('#2b2229');
-export const STAGE_BOTTOM = new THREE.Color('#0f0c0e');
-export const ACCENT = new THREE.Color('#ff7aa0');
+export type StageTheme = 'dark' | 'light';
 
-export function createFaceMaterial(textures: FaceMaterialTextures, skinTone: number[]): THREE.ShaderMaterial {
+/** Background gradient per stage theme (top, bottom). */
+export const STAGE_COLORS: Record<StageTheme, [THREE.Color, THREE.Color]> = {
+  dark: [new THREE.Color('#38383b'), new THREE.Color('#0e0e0f')],
+  light: [new THREE.Color('#efeff1'), new THREE.Color('#cfcfd4')],
+};
+
+export const ACCENT = new THREE.Color('#ffffff');
+
+export function createFaceMaterial(textures: FaceMaterialTextures, skinTone: number[], lit: boolean): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     vertexShader,
     fragmentShader,
@@ -151,18 +164,42 @@ export function createFaceMaterial(textures: FaceMaterialTextures, skinTone: num
       uTone: { value: 0 },
       uRedness: { value: 0 },
       uGlow: { value: 0 },
+      uLit: { value: lit ? 1 : 0 },
       uSkinTone: { value: new THREE.Vector3(...(skinTone.length === 3 ? skinTone : [0.8, 0.65, 0.58])) },
       // Face-space light used only for relative relighting: upper front, slightly to the side.
       uFaceLight: { value: new THREE.Vector3(0.35, 0.55, 0.76).normalize() },
       // View-space key light for specular sheen.
       uKeyLight: { value: new THREE.Vector3(-0.35, 0.5, 0.8).normalize() },
-      uBgTop: { value: STAGE_TOP.clone() },
-      uBgBottom: { value: STAGE_BOTTOM.clone() },
+      uBgTop: { value: STAGE_COLORS.dark[0].clone() },
+      uBgBottom: { value: STAGE_COLORS.dark[1].clone() },
       uViewport: { value: new THREE.Vector2(1, 1) },
       uViewportOrigin: { value: new THREE.Vector2(0, 0) },
       uReveal: { value: 1 },
-      uRevealRange: { value: new THREE.Vector2(-12, 11) },
+      uRevealRange: { value: new THREE.Vector2(11, -12) },
       uAccent: { value: ACCENT.clone() },
     },
+  });
+}
+
+/** Full-screen gradient drawn behind the face (same formula as the face shader's background). */
+export function createBackgroundMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    depthTest: false,
+    depthWrite: false,
+    uniforms: {
+      uBgTop: { value: STAGE_COLORS.dark[0].clone() },
+      uBgBottom: { value: STAGE_COLORS.dark[1].clone() },
+      uViewport: { value: new THREE.Vector2(1, 1) },
+      uViewportOrigin: { value: new THREE.Vector2(0, 0) },
+    },
+    vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: /* glsl */ `
+      uniform vec3 uBgTop; uniform vec3 uBgBottom; uniform vec2 uViewport; uniform vec2 uViewportOrigin;
+      void main() {
+        vec2 p = (gl_FragCoord.xy - uViewportOrigin) / uViewport;
+        vec3 c = mix(uBgBottom, uBgTop, smoothstep(0.0, 1.0, p.y));
+        float vignette = smoothstep(0.95, 0.25, length(p - vec2(0.5, 0.58)));
+        gl_FragColor = vec4(c * mix(0.72, 1.12, vignette), 1.0);
+      }`,
   });
 }

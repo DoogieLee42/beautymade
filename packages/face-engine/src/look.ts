@@ -1,4 +1,4 @@
-import { CONTROL_BY_ID, CONTROLS, isControlId, type ControlId } from './controls';
+import { CATEGORIES, CONTROL_BY_ID, CONTROLS, isControlId, type CategoryId, type ControlId } from './controls';
 import { clamp } from './math';
 import { PRESETS, type ControlValues, type Preset } from './presets';
 
@@ -97,10 +97,34 @@ export function describeLook(values: ControlValues, limit = 3): string {
   return changes.length ? changes.map((c) => c.text).join(' · ') : '변경 없음';
 }
 
+/** Slider readout used in the studio: "0.2", "-0.1", "0". */
+export function formatDecimal(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return rounded === 0 ? '0' : rounded.toFixed(1);
+}
+
+/** Categories a look changes, in display order (e.g. for "코 / 턱/윤곽" captions and filters). */
+export function lookCategories(values: ControlValues): CategoryId[] {
+  const touched = new Set(
+    CONTROLS.filter((c) => Math.abs(values[c.id] ?? 0) >= 0.005).map((c) => c.category),
+  );
+  return CATEGORIES.map((c) => c.id).filter((id) => touched.has(id));
+}
+
+export function categoryLabel(id: CategoryId): string {
+  return CATEGORIES.find((c) => c.id === id)?.label ?? id;
+}
+
+/** Short nouns for look names ("갸름형 윤곽", "도톰형 입술"). */
+const LOOK_NOUN: Record<CategoryId, string> = { nose: '코', contour: '윤곽', lips: '입술', skin: '피부', lifting: '리프팅' };
+
 /** Default name for a new look: an active preset's name, else the dominant change. */
 export function suggestLookName(values: ControlValues): string {
   const preset = activePresets(values)[0];
-  if (preset) return preset.name;
+  if (preset) {
+    const noun = LOOK_NOUN[preset.category];
+    return preset.name.includes(noun) ? preset.name : `${preset.name} ${noun}`;
+  }
   const top = summarizeChanges(values, 2);
   if (!top.length) return '원본';
   return top.map((c) => c.label.replace(/\s*\(.*\)$/, '')).join(' + ');

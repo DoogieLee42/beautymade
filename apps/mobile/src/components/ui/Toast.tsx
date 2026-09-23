@@ -46,12 +46,12 @@ export function ToastHost() {
         key={key}
         entering={FadeInDown.duration(220)}
         exiting={FadeOutDown.duration(180)}
-        style={[styles.toast, shadowStrong, { marginBottom: insets.bottom + 76 }]}
+        style={[styles.toast, shadowStrong, { marginBottom: insets.bottom + 84 }]}
       >
         <Ionicons
           name={tone === 'error' ? 'alert-circle' : 'checkmark-circle'}
           size={20}
-          color={tone === 'error' ? '#FF9B9B' : colors.accent}
+          color={tone === 'error' ? '#FF8A8A' : '#FFFFFF'}
         />
         <Text style={styles.text} numberOfLines={2}>
           {message}
@@ -84,5 +84,5 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   text: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
-  action: { color: colors.accent, fontSize: 14, fontWeight: '800' },
+  action: { color: '#FFFFFF', fontSize: 14, fontWeight: '800', textDecorationLine: 'underline' },
 });
