@@ -7,12 +7,14 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { Look } from '../api/types';
+import { getApi } from '../api';
+import type { AiAngle, Look } from '../api/types';
+import { AiPreviewSheet, type AiPreviewState } from '../components/compare/AiPreviewSheet';
 import { Button, Header, Segmented, toast } from '../components/ui';
-import { useFace, useLook, useLooks, useStudioFace } from '../hooks/queries';
+import { errorMessage, useAiStatus, useFace, useLook, useLooks, useStudioFace } from '../hooks/queries';
 import { useLookSaver } from '../hooks/useLookSaver';
 import { formatDate } from '../lib/format';
-import { shareImage } from '../lib/shareImage';
+import { shareImage, shareRemoteImage } from '../lib/shareImage';
 import { useStudio } from '../state/studio';
 import { colors, radius } from '../theme';
 import type { CompareMode } from '../three/FaceRenderer';
@@ -54,6 +56,8 @@ export default function Compare() {
   const [againstId, setAgainstId] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [ai, setAi] = useState<AiPreviewState | null>(null);
+  const aiStatus = useAiStatus();
 
   const saved = useLook(lookId);
   const savedFace = useFace(saved.data?.faceModelId);
@@ -113,6 +117,40 @@ export default function Compare() {
       toast('이미지를 만들지 못했어요.', { tone: 'error' });
     } finally {
       setExporting(false);
+    }
+  };
+
+  /** AI high-resolution preview: the edited 3D view becomes a photo-like image of the user. */
+  const openAi = async () => {
+    if (!faceRef.current || !face) return;
+    if (face.isDemo || !aiStatus.data?.enabled) {
+      toast(
+        face.isDemo
+          ? '내 얼굴을 스캔하면 AI 고화질 보기를 쓸 수 있어요.'
+          : 'AI 고화질 보기가 아직 설정되지 않았어요. 서버에 API 키가 필요해요.',
+      );
+      return;
+    }
+    const aiAngle: AiAngle = angle && angle !== 'free' ? angle : 'custom';
+    const focus: Partial<CameraFocus> = angle && angle !== 'free' ? ANGLE_VIEWS[angle] : faceRef.current.currentFocus();
+    const guide = await faceRef.current.renderDataUrl({ values, focus, width: 600, height: 800, fit: 1.35 });
+    if (!guide) return;
+    setAi({ status: 'loading', guide });
+    try {
+      const render = await getApi().createAiRender({ faceModelId: face.id, values, angle: aiAngle, guide });
+      setAi({ status: 'done', guide, image: render.url, remaining: render.remainingToday });
+      aiStatus.refetch();
+    } catch (e) {
+      setAi({ status: 'error', guide, message: errorMessage(e) });
+    }
+  };
+
+  const saveAi = async () => {
+    if (ai?.status !== 'done') return;
+    try {
+      if (!(await shareRemoteImage(ai.image, 'beautymade-ai.jpg'))) toast('이 기기에서는 이미지를 저장할 수 없어요.', { tone: 'error' });
+    } catch {
+      toast('이미지를 저장하지 못했어요.', { tone: 'error' });
     }
   };
 
@@ -179,6 +217,15 @@ export default function Compare() {
             <Text style={styles.flipText}>{flip ? labels[0] : labels[1]}</Text>
           </View>
         )}
+        <Pressable
+          onPress={openAi}
+          style={({ pressed }) => [styles.aiButton, pressed && { opacity: 0.85 }]}
+          accessibilityLabel="AI 고화질 보기"
+          testID="ai-open"
+        >
+          <Ionicons name="sparkles" size={14} color={colors.ink} />
+          <Text style={styles.aiText}>AI 고화질</Text>
+        </Pressable>
       </View>
 
       <SafeAreaView edges={['bottom']} style={styles.panel}>
@@ -238,6 +285,7 @@ export default function Compare() {
         onClose={() => setPicking(false)}
       />
       {saver.sheet}
+      <AiPreviewSheet state={ai} onClose={() => setAi(null)} onRetry={openAi} onSave={saveAi} />
     </View>
   );
 }
@@ -311,6 +359,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(90,90,94,0.62)',
   },
   flipText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
+  aiButton: {
+    position: 'absolute',
+    right: 14,
+    bottom: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 34,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: '#FFFFFF',
+  },
+  aiText: { color: colors.ink, fontSize: 13, fontWeight: '700' },
   panel: { flex: 1, backgroundColor: colors.bg },
   panelContent: { paddingHorizontal: 20, paddingTop: 16, gap: 16 },
   modes: {},

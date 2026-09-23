@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     # Run reconstruction inside the request (tests, debugging) instead of the worker pool.
     inline_jobs: bool = False
 
+    # AI high-resolution previews. Leave the keys empty to turn the feature off.
+    ai_provider: str = ""  # gemini | openai | fake; empty = whichever key is set (Gemini first)
+    gemini_api_key: str = ""
+    gemini_image_model: str = "gemini-3-pro-image-preview"  # Nano Banana Pro
+    openai_api_key: str = ""
+    openai_image_model: str = "gpt-image-2"
+    ai_timeout_seconds: float = 120
+    ai_daily_limit: int = 20  # new images per user per day (cached ones are free)
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -122,6 +122,29 @@ export interface LocalPhoto {
   height?: number;
 }
 
+export type AiAngle = 'front' | 'left' | 'right' | 'custom';
+
+export interface AiStatus {
+  enabled: boolean;
+  provider: string | null;
+  remainingToday: number;
+}
+
+export interface NewAiRender {
+  faceModelId: string;
+  values: ControlValues;
+  angle: AiAngle;
+  /** data:image/jpeg;base64,... render of the edited 3D face at the wanted angle */
+  guide: string;
+}
+
+export interface AiRender {
+  id: string;
+  url: string;
+  cached: boolean;
+  remainingToday: number;
+}
+
 export interface ApiClient {
   readonly mode: 'remote' | 'demo';
   readonly baseUrl: string | null;
@@ -142,6 +165,8 @@ export interface ApiClient {
   createLook(input: NewLook): Promise<Look>;
   updateLook(id: string, patch: LookPatch): Promise<Look>;
   deleteLook(id: string): Promise<void>;
+  aiStatus(): Promise<AiStatus>;
+  createAiRender(input: NewAiRender): Promise<AiRender>;
 }
 
 export class ApiError extends Error {

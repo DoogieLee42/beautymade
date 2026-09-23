@@ -208,3 +208,27 @@ class LookOut(Schema):
     thumbnail_url: str | None
     created_at: datetime
     updated_at: datetime
+
+
+# -- AI previews -----------------------------------------------------------------------------
+
+
+class AiStatusOut(Schema):
+    enabled: bool
+    provider: str | None
+    remaining_today: int
+
+
+class AiRenderIn(Schema):
+    face_model_id: str
+    values: dict[str, float] = Field(default_factory=dict)
+    angle: Literal["front", "left", "right", "custom"] = "front"
+    # JPEG/PNG data URL of the edited 3D preview at the wanted angle.
+    guide: str = Field(max_length=4_000_000)
+
+
+class AiRenderOut(Schema):
+    id: str
+    url: str
+    cached: bool
+    remaining_today: int

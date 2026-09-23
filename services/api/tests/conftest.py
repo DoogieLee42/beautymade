@@ -10,15 +10,24 @@ from app.config import Settings
 from app.main import create_app
 
 
+def make_client(tmp_path: Path, **overrides: object) -> TestClient:
+    options: dict[str, object] = {
+        "database_url": f"sqlite:///{tmp_path / 'test.db'}",
+        "storage_dir": tmp_path / "storage",
+        "secret_key": "test-secret-key-that-is-long-enough-for-hs256",
+        "inline_jobs": True,
+        # Never reach a real AI provider from tests, whatever a local .env says.
+        "ai_provider": "",
+        "gemini_api_key": "",
+        "openai_api_key": "",
+    }
+    settings = Settings(**{**options, **overrides})  # type: ignore[arg-type]
+    return TestClient(create_app(settings))
+
+
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(
-        database_url=f"sqlite:///{tmp_path / 'test.db'}",
-        storage_dir=tmp_path / "storage",
-        secret_key="test-secret-key-that-is-long-enough-for-hs256",
-        inline_jobs=True,
-    )
-    with TestClient(create_app(settings)) as c:
+    with make_client(tmp_path) as c:
         yield c
 
 

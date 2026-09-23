@@ -21,6 +21,8 @@ export interface FaceViewHandle {
   snapshot(values: ControlValues): Promise<string | null>;
   /** The camera angle currently on screen, as a focus request. */
   currentFocus(): Partial<CameraFocus>;
+  /** Like renderThumbnail, but always resolves to a JPEG data URL (for uploads). */
+  renderDataUrl(req: ThumbnailRequest): Promise<string | null>;
 }
 
 export interface FaceViewProps {
@@ -175,6 +177,10 @@ export function FaceView({
     focus: (f) => rendererRef.current?.focus(f),
     resetView: () => rendererRef.current?.resetView(),
     currentFocus: () => rendererRef.current?.currentFocus() ?? { yaw: 0, pitch: 0, zoom: 1 },
+    renderDataUrl: async (req) => {
+      const uri = rendererRef.current ? await rendererRef.current.renderThumbnail(req) : null;
+      return uri ? toDataUrl(uri) : null;
+    },
     renderThumbnail: async (req) => (rendererRef.current ? rendererRef.current.renderThumbnail(req) : null),
     snapshot: async (v) => {
       const renderer = rendererRef.current;

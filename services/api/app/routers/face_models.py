@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ..deps import DbDep, Services, ServicesDep, UserDep
-from ..models import FaceModel, Look, Scan
+from ..models import AiRender, FaceModel, Look, Scan
 from ..schemas import FaceModelOut, FaceModelSummaryOut, HeadShellOut, MeshOut, TexturesOut
 
 router = APIRouter(prefix="/face-models", tags=["face models"])
@@ -79,6 +79,7 @@ def delete_face_model(face_id: str, user: UserDep, svc: ServicesDep, db: DbDep) 
     """Deletes a face model, its textures, the looks made on it and the scan photos it came from."""
     face = _owned(db, user.id, face_id)
     db.execute(delete(Look).where(Look.user_id == user.id, Look.face_model_id == face.id))
+    db.execute(delete(AiRender).where(AiRender.user_id == user.id, AiRender.face_model_id == face.id))
     scan = db.get(Scan, face.scan_id)
     if scan is not None and scan.user_id == user.id:
         db.delete(scan)
@@ -87,3 +88,4 @@ def delete_face_model(face_id: str, user: UserDep, svc: ServicesDep, db: DbDep) 
     svc.storage.delete_prefix(face.storage_prefix)
     svc.storage.delete_prefix(f"users/{user.id}/looks/{face.id}")
     svc.storage.delete_prefix(f"users/{user.id}/scans/{face.scan_id}")
+    svc.storage.delete_prefix(f"users/{user.id}/ai/{face.id}")

@@ -93,10 +93,28 @@ API를 띄우지 않고 앱만 실행해도 됩니다(`npm run mobile:web` 또�
 API는 `BM_` 접두사 환경 변수(또는 `services/api/.env`)로 설정합니다. 예시는 `services/api/.env.example`에 있어요.
 앱은 `EXPO_PUBLIC_API_URL`로 API 주소를 고정할 수 있고, 비워두면 개발 서버가 떠 있는 컴퓨터의 `:8000`을 씁니다.
 
+## AI 고화질 보기 켜기
+
+비교 화면의 **AI 고화질** 버튼은 편집한 3D 미리보기와 정면 사진을 이미지 AI에 보내 사진 같은 결과를 만들어요.
+`services/api/.env`에 키를 하나 넣고 서버를 다시 켜면 동작합니다.
+
+```bash
+BM_GEMINI_API_KEY=...    # Google AI Studio 키 → Nano Banana Pro (기본)
+BM_OPENAI_API_KEY=...    # OpenAI 키 → GPT Image 2 (BM_AI_PROVIDER=openai 로 선택)
+```
+
+- 같은 룩 · 같은 각도는 한 번만 생성하고 저장해 두어서 다시 볼 때는 비용이 들지 않아요.
+- 사용자당 하루 생성 한도는 `BM_AI_DAILY_LIMIT`(기본 20장)로 정해요.
+- 두 엔진을 내 사진으로 직접 비교하려면:
+  `cd services/api && uv run python scripts/compare_ai_providers.py 정면사진.jpg 3D미리보기.jpg --values '{"noseBridge":0.6}'`
+- 키가 없으면 버튼을 눌러도 "아직 설정되지 않았어요"라고만 안내해요. 데모 모드에서는 쓸 수 없어요.
+
 ## 개인정보
 
 원본 사진과 3D 얼굴은 로그인한 계정에만 저장됩니다. 파일 URL은 서명된 링크로만 내려가고, 프로필에서
-얼굴 데이터나 계정을 삭제하면 서버의 사진 · 3D 모델 · 룩이 함께 지워집니다.
+얼굴 데이터나 계정을 삭제하면 서버의 사진 · 3D 모델 · 룩 · AI 이미지가 함께 지워집니다.
+AI 고화질 보기를 켜면 그 요청의 정면 사진과 3D 미리보기가 선택한 AI 회사(Google 또는 OpenAI)로 전송돼요.
+출시 전에는 이용자 동의 문구와 각 회사의 데이터 보관 정책을 확인해야 해요.
 
 ## 사용한 외부 자료
 

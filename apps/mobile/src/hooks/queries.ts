@@ -96,6 +96,12 @@ export function useDeleteLook() {
   return useMutation({ mutationFn: (id: string) => getApi().deleteLook(id), onSuccess: invalidate });
 }
 
+/** Whether AI high-resolution previews are available (and how many are left today). */
+export function useAiStatus() {
+  const { enabled, scope } = useScope();
+  return useQuery({ queryKey: ['ai-status', scope], queryFn: () => getApi().aiStatus(), enabled, staleTime: 60_000 });
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return '문제가 생겼어요. 잠시 후 다시 시도해주세요.';

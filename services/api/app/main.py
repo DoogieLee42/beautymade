@@ -17,7 +17,7 @@ from .db import Database
 from .deps import Services
 from .jobs import JobRunner, run_reconstruction
 from .models import Scan
-from .routers import auth, face_models, files, looks, scans
+from .routers import ai, auth, face_models, files, looks, scans
 from .storage import LocalStorage
 
 log = logging.getLogger("beautymade")
@@ -70,7 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    for module in (auth, scans, face_models, looks, files):
+    for module in (auth, scans, face_models, looks, files, ai):
         app.include_router(module.router)
     return app
 
