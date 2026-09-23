@@ -109,3 +109,16 @@ def test_scans_are_private(client: TestClient, auth: dict) -> None:
     assert client.get(f"/scans/{scan['id']}", headers=other).status_code == 404
     assert _upload(client, other, scan["id"], "front", three_views()["front"]).status_code == 404
     assert client.get("/face-models/current", headers=other).status_code == 404
+
+
+def test_deleting_face_removes_scan_photos(client: TestClient, auth: dict) -> None:
+    scan = client.post("/scans", headers=auth).json()
+    photo_url = _upload(client, auth, scan["id"], "front", three_views()["front"]).json()["url"]
+    done = client.post(f"/scans/{scan['id']}/submit", headers=auth).json()
+    assert done["status"] == "completed", done
+    assert client.get(photo_url).status_code == 200
+
+    assert client.delete(f"/face-models/{done['faceModelId']}", headers=auth).status_code == 204
+    assert client.get(photo_url).status_code == 404
+    assert client.get(f"/scans/{scan['id']}", headers=auth).status_code == 404
+    assert client.get("/face-models/current", headers=auth).status_code == 404

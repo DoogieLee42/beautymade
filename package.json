@@ -7,14 +7,22 @@
     "packages/*"
   ],
   "scripts": {
+    "setup": "npm install && npm run api:setup",
+    "dev": "concurrently -k -n api,app -c blue,magenta \"npm:api\" \"npm:mobile\"",
+    "dev:web": "concurrently -k -n api,web -c blue,magenta \"npm:api\" \"npm:mobile:web\"",
+    "api": "cd services/api && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "api:setup": "cd services/api && uv sync",
+    "api:test": "cd services/api && uv run pytest -q",
     "mobile": "npm run start -w @beautymade/mobile",
     "mobile:web": "npm run web -w @beautymade/mobile",
-    "test": "npm run test -w @beautymade/face-engine",
+    "test": "npm run test -w @beautymade/face-engine && npm run api:test",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
     "gen:topology": "python3 scripts/gen_canonical_topology.py"
   },
   "engines": {
     "node": ">=20.19"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.4"
   }
 }
