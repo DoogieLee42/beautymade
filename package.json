@@ -1,0 +1,20 @@
+{
+  "name": "beautymade",
+  "private": true,
+  "description": "BeautyMade: scan your face once, then simulate beauty changes on your own 3D face.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "mobile": "npm run start -w @beautymade/mobile",
+    "mobile:web": "npm run web -w @beautymade/mobile",
+    "test": "npm run test -w @beautymade/face-engine",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "gen:topology": "python3 scripts/gen_canonical_topology.py"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

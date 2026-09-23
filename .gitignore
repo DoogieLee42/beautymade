@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+.pnp*
+
+# expo / metro / builds
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+ios/
+android/
+.metro-health-check*
+
+# typescript
+*.tsbuildinfo
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# api runtime data (sqlite db, uploaded photos, generated face models, downloaded ML models)
+services/api/var/
+services/api/.models/
+
+# env / os / editors
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
