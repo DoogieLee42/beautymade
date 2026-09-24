@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import delete, func, select
 
 from ..deps import DbDep, ServicesDep, UserDep
-from ..models import FaceModel, Look, Scan, ScanPhoto, User
+from ..models import AiRender, FaceModel, Look, Scan, ScanPhoto, User
 from ..schemas import AuthOut, LoginIn, MeOut, SignupIn, UserOut
 from ..security import create_access_token, hash_password, verify_password
 from .face_models import latest_face_model, summary_out
@@ -51,7 +51,7 @@ def delete_account(user: UserDep, svc: ServicesDep, db: DbDep) -> None:
     """Deletes the account with every photo, face model and look (privacy by default)."""
     scan_ids = select(Scan.id).where(Scan.user_id == user.id)
     db.execute(delete(ScanPhoto).where(ScanPhoto.scan_id.in_(scan_ids)))
-    for model in (Look, FaceModel, Scan):
+    for model in (AiRender, Look, FaceModel, Scan):
         db.execute(delete(model).where(model.user_id == user.id))
     db.delete(user)
     db.commit()

@@ -102,6 +102,8 @@ def run_reconstruction(db: Database, storage: LocalStorage, scan_id: str) -> Non
     storage.put(f"{prefix}/smooth.jpg", result.smooth_jpg)
     storage.put(f"{prefix}/mask.png", result.mask_png)
     storage.put(f"{prefix}/thumbnail.jpg", result.thumbnail_jpg)
+    if result.eyes_jpg:
+        storage.put(f"{prefix}/eyes.jpg", result.eyes_jpg)
 
     with db.session() as session:
         meta = {k: v for k, v in result.model.items() if k not in ("mesh",)}

@@ -18,9 +18,9 @@ import { useCapture } from '../../state/capture';
 import { colors, radius } from '../../theme';
 
 const STEPS: { view: CaptureView; label: string; title: string; hint: string }[] = [
-  { view: 'front', label: '정면', title: '정면을 바라봐 주세요', hint: '얼굴이 가이드 안에 꽉 차게 맞춰주세요' },
-  { view: 'left', label: '왼쪽', title: '고개를 왼쪽으로 돌려주세요', hint: '30° 정도 · 코끝이 점선에 오도록' },
-  { view: 'right', label: '오른쪽', title: '고개를 오른쪽으로 돌려주세요', hint: '30° 정도 · 코끝이 점선에 오도록' },
+  { view: 'front', label: '정면', title: '정면을 맞춰주세요', hint: '가이드를 따라 얼굴을 프레임 안에 맞춰주세요.' },
+  { view: 'left', label: '왼쪽', title: '왼쪽으로 45도 돌려주세요', hint: '코끝이 점선에 오도록 천천히 돌려주세요.' },
+  { view: 'right', label: '오른쪽', title: '오른쪽으로 45도 돌려주세요', hint: '코끝이 점선에 오도록 천천히 돌려주세요.' },
 ];
 
 const MAX_SIDE = 1600;
@@ -46,8 +46,7 @@ export default function Capture() {
   const camera = useRef<CameraView>(null);
   const { scanId, shots, begin, setShot, reset } = useCapture();
   const [step, setStep] = useState(0);
-  const [size, setSize] = useState({ width: 0, height: 0 });
-  const [timerOn, setTimerOn] = useState(false);
+  const [flashOn, setFlashOn] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [skipped, setSkipped] = useState<CaptureView[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -107,7 +106,12 @@ export default function Capture() {
 
   const onShutter = () => {
     if (busy || !scanId) return;
-    if (!timerOn) return void takePicture();
+    takePicture();
+  };
+
+  // Long-press the shutter for a 3-second self-timer (handy for the side angles).
+  const onShutterLong = () => {
+    if (busy || !scanId) return;
     setCountdown(3);
     later(() => setCountdown(2), 1000);
     later(() => setCountdown(1), 2000);
@@ -156,60 +160,37 @@ export default function Capture() {
   if (!permission) return <View style={styles.root} />;
 
   return (
-    <View style={styles.root} onLayout={(e) => setSize(e.nativeEvent.layout)}>
+    <View style={styles.root}>
       <StatusBar style="light" />
       {permission.granted ? (
-        <CameraView ref={camera} style={StyleSheet.absoluteFill} facing="front" mode="picture" />
+        <CameraView ref={camera} style={StyleSheet.absoluteFill} facing="front" mode="picture" flash={flashOn ? 'screen' : 'off'} />
       ) : (
         <View style={styles.permission}>
           <Ionicons name="camera-outline" size={40} color={colors.stageText} />
           <Text style={styles.permissionTitle}>카메라 권한이 필요해요</Text>
           <Text style={styles.permissionBody}>얼굴 사진 3장을 찍어 3D 얼굴을 만들어요. 사진은 3D 생성에만 사용돼요.</Text>
-          <Button title="카메라 허용하기" onPress={requestPermission} style={styles.permissionButton} />
-          <Button title="앨범에서 사진 선택" variant="light" size="md" onPress={pickFromLibrary} />
+          <Button title="카메라 허용하기" variant="white" onPress={requestPermission} style={styles.permissionButton} />
+          <Button title="앨범에서 사진 선택" variant="subtle" size="md" onPress={pickFromLibrary} />
         </View>
       )}
 
-      {permission.granted && <FaceGuide width={size.width} height={size.height} view={current.view} state={guideState} />}
+      {permission.granted && <FaceGuide view={current.view} state={guideState} />}
 
       <SafeAreaView edges={['top']} style={styles.top} pointerEvents="box-none">
         <View style={styles.topRow}>
           <IconButton
             icon="close"
             label="촬영 종료"
-            tone="dark"
+            tone="plainDark"
+            size={40}
             onPress={() => {
               reset();
               router.back();
             }}
           />
-          <View style={styles.steps}>
-            {STEPS.map((s, i) => {
-              const st = shots[s.view]?.status;
-              const isSkipped = skipped.includes(s.view);
-              return (
-                <Pressable
-                  key={s.view}
-                  onPress={() => !busy && retake(i)}
-                  style={[styles.stepPill, i === step && styles.stepPillActive]}
-                  accessibilityLabel={`${s.label} 다시 찍기`}
-                >
-                  {st === 'ok' ? (
-                    <Ionicons name="checkmark-circle" size={16} color="#4ADE9A" />
-                  ) : st === 'uploading' ? (
-                    <ActivityIndicator size="small" color={colors.accent} />
-                  ) : st === 'rejected' || st === 'error' ? (
-                    <Ionicons name="alert-circle" size={16} color="#FF6B6B" />
-                  ) : isSkipped ? (
-                    <Ionicons name="remove-circle-outline" size={16} color={colors.stageMuted} />
-                  ) : (
-                    <Text style={styles.stepNum}>{i + 1}</Text>
-                  )}
-                  <Text style={[styles.stepLabel, i === step && styles.stepLabelActive]}>{s.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          <Text style={styles.counter}>
+            {Math.min(step + 1, STEPS.length)} / {STEPS.length}
+          </Text>
           <View style={{ width: 40 }} />
         </View>
         {!complete && (
@@ -232,8 +213,8 @@ export default function Capture() {
             <View style={[styles.feedback, shot.status === 'uploading' ? styles.feedbackBusy : styles.feedbackBad]}>
               {shot.status === 'uploading' ? (
                 <>
-                  <ActivityIndicator color={colors.accent} />
-                  <Text style={styles.feedbackText}>사진을 확인하는 중...</Text>
+                  <ActivityIndicator color="#FFFFFF" />
+                  <Text style={styles.feedbackText}>사진을 확인하고 있어요</Text>
                 </>
               ) : (
                 <View style={styles.feedbackBody}>
@@ -254,37 +235,45 @@ export default function Capture() {
           )}
           {shot?.status === 'ok' && (
             <View style={[styles.feedback, styles.feedbackOk]}>
-              <Ionicons name="checkmark-circle" size={20} color="#4ADE9A" />
+              <Ionicons name="checkmark-circle" size={20} color="#4ADE80" />
               <Text style={styles.feedbackText}>좋아요! 다음 각도로 넘어갈게요</Text>
             </View>
           )}
           <View style={styles.controls}>
-            <IconButton icon="images-outline" label="앨범에서 선택" tone="dark" size={48} onPress={pickFromLibrary} />
+            <Pressable onPress={pickFromLibrary} style={styles.gallery} accessibilityRole="button" accessibilityLabel="앨범에서 가져오기">
+              <View style={styles.galleryIcon}>
+                <Ionicons name="image-outline" size={24} color="#FFFFFF" />
+              </View>
+              <Text style={styles.galleryText}>앨범에서 가져오기</Text>
+            </Pressable>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="촬영"
+              accessibilityLabel="촬영 (길게 누르면 3초 타이머)"
               testID="shutter"
               onPress={onShutter}
+              onLongPress={onShutterLong}
               disabled={busy || !permission.granted || !scanId}
               style={({ pressed }) => [styles.shutter, (busy || !scanId) && { opacity: 0.5 }, pressed && { transform: [{ scale: 0.94 }] }]}
             >
               <View style={styles.shutterInner} />
             </Pressable>
-            <IconButton
-              icon="timer-outline"
-              label={timerOn ? '타이머 끄기' : '3초 타이머'}
-              tone="dark"
-              size={48}
-              active={timerOn}
-              onPress={() => setTimerOn((t) => !t)}
-            />
+            <View style={styles.sideSlot}>
+              <IconButton
+                icon={flashOn ? 'flash' : 'flash-outline'}
+                label={flashOn ? '플래시 끄기' : '플래시 켜기'}
+                tone="dark"
+                size={48}
+                active={flashOn}
+                onPress={() => setFlashOn((f) => !f)}
+              />
+            </View>
           </View>
         </SafeAreaView>
       )}
 
       {complete && (
         <SafeAreaView edges={['bottom']} style={styles.review}>
-          <Text style={styles.reviewTitle}>촬영 완료!</Text>
+          <Text style={styles.reviewTitle}>촬영이 끝났어요</Text>
           <Text style={styles.reviewBody}>이 사진들로 내 3D 얼굴을 만들게요.</Text>
           <View style={styles.thumbs}>
             {STEPS.map((s, i) => {
@@ -298,12 +287,17 @@ export default function Capture() {
                       <Ionicons name="remove" size={20} color={colors.stageMuted} />
                     </View>
                   )}
+                  {sh && (
+                    <View style={styles.thumbCheck}>
+                      <Ionicons name="checkmark" size={12} color={colors.ink} />
+                    </View>
+                  )}
                   <Text style={styles.thumbLabel}>{sh ? s.label : `${s.label} (건너뜀)`}</Text>
                 </Pressable>
               );
             })}
           </View>
-          <Button title="3D 얼굴 만들기" icon="sparkles" onPress={submit} loading={submitting} testID="submit-scan" />
+          <Button title="3D 얼굴 만들기" variant="white" onPress={submit} loading={submitting} testID="submit-scan" />
           <Text style={styles.reviewHint}>사진을 누르면 그 각도만 다시 찍을 수 있어요</Text>
         </SafeAreaView>
       )}
@@ -313,50 +307,50 @@ export default function Capture() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
-  top: { position: 'absolute', top: 0, left: 0, right: 0 },
-  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8 },
-  steps: { flexDirection: 'row', gap: 6 },
-  stepPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    height: 32,
-    paddingHorizontal: 10,
-    borderRadius: radius.pill,
-    backgroundColor: 'rgba(20,16,18,0.55)',
-  },
-  stepPillActive: { backgroundColor: 'rgba(255,255,255,0.95)' },
-  stepNum: { color: colors.stageMuted, fontSize: 12, fontWeight: '800', width: 16, textAlign: 'center' },
-  stepLabel: { color: colors.stageText, fontSize: 13, fontWeight: '700' },
-  stepLabelActive: { color: colors.ink },
-  instruction: { alignItems: 'center', marginTop: 18, paddingHorizontal: 24 },
-  instructionTitle: { color: '#fff', fontSize: 22, fontWeight: '800', letterSpacing: -0.5, textAlign: 'center', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 8 },
-  instructionHint: { color: 'rgba(255,255,255,0.8)', fontSize: 14, marginTop: 6, textAlign: 'center' },
+  top: { position: 'absolute', top: 0, left: 0, right: 0, backgroundColor: 'rgba(28,28,30,0.72)', paddingBottom: 18 },
+  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 4 },
+  counter: { color: '#FFFFFF', fontSize: 16, fontWeight: '600', letterSpacing: 1 },
+  instruction: { alignItems: 'center', marginTop: 10, paddingHorizontal: 24, gap: 6 },
+  instructionTitle: { color: '#FFFFFF', fontSize: 21, fontWeight: '700', letterSpacing: -0.4, textAlign: 'center' },
+  instructionHint: { color: 'rgba(255,255,255,0.85)', fontSize: 14, textAlign: 'center' },
   countdown: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   countdownText: { color: '#fff', fontSize: 96, fontWeight: '800', textShadowColor: 'rgba(0,0,0,0.4)', textShadowRadius: 20 },
   bottom: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 16 },
-  feedback: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: radius.lg, marginBottom: 14 },
-  feedbackBusy: { backgroundColor: 'rgba(20,16,18,0.8)' },
-  feedbackBad: { backgroundColor: 'rgba(60,18,24,0.9)', borderWidth: 1, borderColor: 'rgba(255,107,107,0.5)' },
-  feedbackOk: { backgroundColor: 'rgba(16,40,28,0.88)' },
+  feedback: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: radius.lg, marginBottom: 16 },
+  feedbackBusy: { backgroundColor: 'rgba(20,20,20,0.78)' },
+  feedbackBad: { backgroundColor: 'rgba(20,20,20,0.86)', borderWidth: 1, borderColor: 'rgba(255,107,107,0.6)' },
+  feedbackOk: { backgroundColor: 'rgba(20,20,20,0.78)' },
   feedbackBody: { flex: 1, gap: 10 },
   feedbackText: { color: '#fff', fontSize: 14, fontWeight: '600', lineHeight: 20, flexShrink: 1 },
   feedbackActions: { flexDirection: 'row', gap: 18 },
-  feedbackAction: { color: colors.accent, fontSize: 14, fontWeight: '800' },
+  feedbackAction: { color: '#FFFFFF', fontSize: 14, fontWeight: '800', textDecorationLine: 'underline' },
   feedbackSecondary: { color: 'rgba(255,255,255,0.7)', fontSize: 14, fontWeight: '600' },
-  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingBottom: 12 },
+  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, paddingBottom: 14 },
+  gallery: { width: 96, alignItems: 'center', gap: 6 },
+  galleryIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 12,
+    backgroundColor: 'rgba(40,40,42,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  galleryText: { color: '#FFFFFF', fontSize: 11, fontWeight: '500' },
+  sideSlot: { width: 96, alignItems: 'center' },
   shutter: {
-    width: 78,
-    height: 78,
-    borderRadius: 39,
+    width: 82,
+    height: 82,
+    borderRadius: 41,
     borderWidth: 4,
-    borderColor: '#fff',
+    borderColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  shutterInner: { width: 62, height: 62, borderRadius: 31, backgroundColor: '#fff' },
+  shutterInner: { width: 66, height: 66, borderRadius: 33, backgroundColor: '#FFFFFF' },
   permission: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12, backgroundColor: colors.stage },
-  permissionTitle: { color: colors.stageText, fontSize: 20, fontWeight: '800', marginTop: 8 },
+  permissionTitle: { color: colors.stageText, fontSize: 20, fontWeight: '700', marginTop: 8 },
   permissionBody: { color: colors.stageMuted, fontSize: 14, lineHeight: 20, textAlign: 'center' },
   permissionButton: { alignSelf: 'stretch', marginTop: 12 },
   review: {
@@ -364,19 +358,30 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: colors.stage,
+    backgroundColor: '#161616',
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     paddingHorizontal: 20,
     paddingTop: 24,
     gap: 6,
   },
-  reviewTitle: { color: colors.stageText, fontSize: 22, fontWeight: '800', letterSpacing: -0.4 },
+  reviewTitle: { color: colors.stageText, fontSize: 21, fontWeight: '700', letterSpacing: -0.4 },
   reviewBody: { color: colors.stageMuted, fontSize: 14 },
   thumbs: { flexDirection: 'row', gap: 10, marginVertical: 16 },
-  thumb: { flex: 1, gap: 6, alignItems: 'center' },
-  thumbImage: { width: '100%', aspectRatio: 0.78, borderRadius: radius.md, backgroundColor: colors.stageRaised },
+  thumb: { flex: 1, gap: 8, alignItems: 'center' },
+  thumbImage: { width: '100%', aspectRatio: 0.8, borderRadius: 10, backgroundColor: colors.stageRaised },
   thumbEmpty: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.stageLine },
-  thumbLabel: { color: colors.stageMuted, fontSize: 12, fontWeight: '700' },
+  thumbCheck: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbLabel: { color: colors.stageMuted, fontSize: 12, fontWeight: '600' },
   reviewHint: { color: colors.stageMuted, fontSize: 12, textAlign: 'center', marginTop: 6, marginBottom: 8 },
 });

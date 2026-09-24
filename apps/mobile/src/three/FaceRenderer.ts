@@ -1,6 +1,7 @@
 import {
-  CONTROL_BY_ID,
   computeVertexNormals,
+  creaseHeightMm,
+  isShapeControlId,
   type CameraFocus,
   type ControlValues,
   type DeformationModel,
@@ -8,13 +9,26 @@ import {
 } from '@beautymade/face-engine';
 import * as THREE from 'three';
 
-import { ACCENT, STAGE_BOTTOM, STAGE_TOP, createFaceMaterial, type FaceMaterialTextures } from './faceMaterial';
+import type { EyeMap } from '../api/types';
+import {
+  STAGE_COLORS,
+  createBackgroundMaterial,
+  createFaceMaterial,
+  type FaceMaterialTextures,
+  type StageTheme,
+} from './faceMaterial';
+import { createWireframe, type WireMesh } from './wireframe';
 
 export interface LoadedFace {
   id: string;
   mesh: FaceMesh;
+  wire: WireMesh;
   model: DeformationModel;
+  /** Upper-eyelid coordinates per vertex, for the double-eyelid crease (see DeformationModel.lidCoordinates). */
+  lid: Float32Array;
   textures: FaceMaterialTextures;
+  /** How the eye openings find their place in `textures.eyes`, when the face has an eyeball texture. */
+  eyeMaps: { right: EyeMap; left: EyeMap } | null;
   skinTone: number[];
 }
 
@@ -22,9 +36,12 @@ export interface LoadedFace {
  * off:        the edited face ("after")
  * original:   the untouched face (press-and-hold "before")
  * split:      before | after divided by a draggable vertical line, same camera
- * sideBySide: two faces in two viewports (e.g. comparing two saved looks)
+ * sideBySide: two faces in two viewports (e.g. before and after, or two looks)
  */
 export type CompareMode = 'off' | 'original' | 'split' | 'sideBySide';
+
+/** photo: the textured face. wireframe: glowing mesh used while the face is generated. */
+export type RenderStyle = 'photo' | 'wireframe';
 
 export interface ViewState {
   yaw: number;
@@ -32,6 +49,21 @@ export interface ViewState {
   zoom: number;
   target: THREE.Vector3;
 }
+
+export interface ThumbnailRequest {
+  values: ControlValues;
+  focus: Partial<CameraFocus>;
+  width: number;
+  height: number;
+  theme?: StageTheme;
+  /** Renders a before | after pair instead: these values on the left, `values` on the right. */
+  pair?: ControlValues;
+  /** Framing margin (see setFit); thumbnails don't inherit the view's. Default 1.1. */
+  fit?: number;
+}
+
+/** Reads a render target back as an image URI (platform specific, see glContext). */
+export type ReadTarget = (renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget) => Promise<string | null>;
 
 const MAX_YAW = 88;
 const MAX_PITCH = 32;
@@ -57,6 +89,7 @@ export class FaceRenderer {
   readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 400);
+  private readonly thumbCamera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 400);
   private readonly background: THREE.Mesh;
   private readonly backgroundScene = new THREE.Scene();
   private readonly backgroundCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -65,6 +98,9 @@ export class FaceRenderer {
   private face: LoadedFace | null = null;
   private after: FaceInstance | null = null;
   private before: FaceInstance | null = null;
+  private thumb: FaceInstance | null = null;
+  private thumbPair: FaceInstance | null = null;
+  private wire: ReturnType<typeof createWireframe> | null = null;
   private afterValues: ControlValues = {};
   private beforeValues: ControlValues = {};
   private faceCenter = new THREE.Vector3();
@@ -73,13 +109,15 @@ export class FaceRenderer {
   private width = 1;
   private height = 1;
   private compareMode: CompareMode = 'off';
+  private style: RenderStyle = 'photo';
+  private theme: StageTheme = 'dark';
   private split = 0.5;
   private mirrored = false;
   private fit = 1.3;
 
   private view: ViewState = { yaw: 0, pitch: 0, zoom: 1, target: new THREE.Vector3() };
   private tween: { from: ViewState; to: ViewState; start: number; duration: number } | null = null;
-  private turntable: { amplitude: number; speed: number; start: number; phase: number } | null = null;
+  private turntable: { amplitude: number; speed: number; start: number; phase: number; full: boolean } | null = null;
   private reveal: { start: number; duration: number } | null = null;
   private velocity = { yaw: 0, pitch: 0 };
   private dragging = false;
@@ -87,35 +125,17 @@ export class FaceRenderer {
   private frame: number | null = null;
   private dirty = true;
   private disposed = false;
-  private readonly onFrameEnd: () => void;
+  private thumbQueue: Promise<unknown> = Promise.resolve();
 
-  constructor(renderer: THREE.WebGLRenderer, onFrameEnd: () => void = () => {}) {
+  constructor(
+    renderer: THREE.WebGLRenderer,
+    private readonly options: { onFrameEnd?: () => void; readTarget?: ReadTarget } = {},
+  ) {
     this.renderer = renderer;
-    this.onFrameEnd = onFrameEnd;
     renderer.autoClear = false;
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-    renderer.setClearColor(STAGE_BOTTOM, 1);
-
-    const bgMaterial = new THREE.ShaderMaterial({
-      depthTest: false,
-      depthWrite: false,
-      uniforms: {
-        uBgTop: { value: STAGE_TOP },
-        uBgBottom: { value: STAGE_BOTTOM },
-        uViewport: { value: new THREE.Vector2(1, 1) },
-        uViewportOrigin: { value: new THREE.Vector2(0, 0) },
-      },
-      vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
-      fragmentShader: /* glsl */ `
-        uniform vec3 uBgTop; uniform vec3 uBgBottom; uniform vec2 uViewport; uniform vec2 uViewportOrigin;
-        void main() {
-          vec2 p = (gl_FragCoord.xy - uViewportOrigin) / uViewport;
-          vec3 c = mix(uBgBottom, uBgTop, smoothstep(0.0, 1.0, p.y));
-          float vignette = smoothstep(0.95, 0.25, length(p - vec2(0.5, 0.58)));
-          gl_FragColor = vec4(c * mix(0.72, 1.12, vignette), 1.0);
-        }`,
-    });
-    this.background = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bgMaterial);
+    renderer.setClearColor(STAGE_COLORS.dark[1], 1);
+    this.background = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), createBackgroundMaterial());
     this.background.frustumCulled = false;
     this.backgroundScene.add(this.background);
     this.scene.add(this.root);
@@ -138,15 +158,27 @@ export class FaceRenderer {
     this.before = this.createInstance(face);
     this.root.add(this.after.object, this.before.object);
 
+    // Frame the face (the landmarks), not the whole head, so every model is framed alike.
+    const faceBox = new THREE.Box3();
+    const p = face.mesh.positions;
+    const point = new THREE.Vector3();
+    for (let i = 0; i < face.mesh.landmarkCount; i++) faceBox.expandByPoint(point.fromArray(p, i * 3));
+    faceBox.getCenter(this.faceCenter);
+    this.faceSize.set(faceBox.max.x - faceBox.min.x, faceBox.max.y - faceBox.min.y);
     this.after.geometry.computeBoundingBox();
     const box = this.after.geometry.boundingBox!;
-    box.getCenter(this.faceCenter);
-    this.faceCenter.z = box.max.z * 0.35 + box.min.z * 0.65;
+    const faceDepth = faceBox.max.z * 0.35 + faceBox.min.z * 0.65;
+    // With a head, orbit around a point between the face and the middle of the head.
+    this.faceCenter.z = face.mesh.hasHead ? faceDepth * 0.55 + ((box.max.z + box.min.z) / 2) * 0.45 : faceDepth;
     for (const inst of [this.after, this.before]) {
       inst.material.uniforms.uRevealRange.value.set(box.max.y + 0.5, box.min.y - 0.5);
     }
-    this.faceSize.set(box.max.x - box.min.x, box.max.y - box.min.y);
+
+    this.wire = createWireframe(face.wire, this.renderer.getPixelRatio(), !face.mesh.hasHead);
+    this.root.add(this.wire.group);
+
     this.view = { yaw: 0, pitch: 0, zoom: 1, target: this.faceCenter.clone() };
+    this.applyTheme();
     this.applyInstanceValues(this.after, this.afterValues, true);
     this.applyInstanceValues(this.before, this.beforeValues, true);
     this.invalidate();
@@ -164,10 +196,14 @@ export class FaceRenderer {
     geometry.setAttribute('normal0', new THREE.BufferAttribute(mesh.normals, 3));
     geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.uvs, 2));
     geometry.setAttribute('edgeFade', new THREE.BufferAttribute(mesh.edgeFade, 1));
+    geometry.setAttribute('eye', new THREE.BufferAttribute(mesh.eye, 1));
+    geometry.setAttribute('eyeShade', new THREE.BufferAttribute(mesh.eyeShade, 1));
+    geometry.setAttribute('lid', new THREE.BufferAttribute(face.lid, 2));
     geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-    const material = createFaceMaterial(face.textures, face.skinTone);
+    const material = createFaceMaterial(face.textures, face.skinTone, face.eyeMaps);
     const object = new THREE.Mesh(geometry, material);
     object.frustumCulled = false;
+    object.visible = false;
     return { geometry, material, object, positions, normals, values: {} };
   }
 
@@ -190,11 +226,10 @@ export class FaceRenderer {
     if (!face) return;
     const prev = inst.values;
     inst.values = { ...values };
-    const shapeChanged = force || shapeKeysDiffer(prev, values);
-    if (shapeChanged) {
+    if (force || shapeKeysDiffer(prev, values)) {
       const pos = inst.positions.array as Float32Array;
       face.model.apply(values, pos);
-      computeVertexNormals(pos, face.mesh.indices, inst.normals.array as Float32Array);
+      computeVertexNormals(pos, face.mesh.indices, inst.normals.array as Float32Array, face.mesh.weld);
       inst.positions.needsUpdate = true;
       inst.normals.needsUpdate = true;
     }
@@ -203,6 +238,9 @@ export class FaceRenderer {
     u.uTone.value = values.skinTone ?? 0;
     u.uRedness.value = values.skinRedness ?? 0;
     u.uGlow.value = values.skinGlow ?? 0;
+    u.uCrease.value = values.creaseDepth ?? 0;
+    u.uCreaseHeight.value = creaseHeightMm(values.creaseHeight ?? 0);
+    u.uCreaseShape.value = values.creaseShape ?? 0;
     this.invalidate();
   }
 
@@ -210,6 +248,30 @@ export class FaceRenderer {
     if (mode === this.compareMode) return;
     this.compareMode = mode;
     this.invalidate();
+  }
+
+  setRenderStyle(style: RenderStyle): void {
+    if (style === this.style) return;
+    this.style = style;
+    this.invalidate();
+  }
+
+  setTheme(theme: StageTheme): void {
+    if (theme === this.theme) return;
+    this.theme = theme;
+    this.applyTheme();
+    this.invalidate();
+  }
+
+  private applyTheme(theme: StageTheme = this.theme): void {
+    const [top, bottom] = STAGE_COLORS[theme];
+    const materials = [this.background.material as THREE.ShaderMaterial];
+    for (const inst of [this.after, this.before, this.thumb, this.thumbPair]) if (inst) materials.push(inst.material);
+    for (const m of materials) {
+      m.uniforms.uBgTop.value.copy(top);
+      m.uniforms.uBgBottom.value.copy(bottom);
+    }
+    this.renderer.setClearColor(bottom, 1);
   }
 
   /** Divider position for split mode, 0..1 from the left. */
@@ -262,30 +324,30 @@ export class FaceRenderer {
     this.invalidate();
   }
 
-  /** Animates to a camera pose. Yaw is given for the unmirrored face. */
-  focus(focus: Partial<CameraFocus>, duration = 650): void {
-    const face = this.face;
+  /** Camera state for a focus request. Yaw is given for the unmirrored face. */
+  private viewFor(focus: Partial<CameraFocus>, positions?: ArrayLike<number>): ViewState {
     const sign = this.mirrored ? -1 : 1;
     const center = new THREE.Vector3(this.faceCenter.x * sign, this.faceCenter.y, this.faceCenter.z);
     const target = center.clone();
     const zoom = focus.zoom ?? 1;
+    const face = this.face;
     if (face && focus.target?.length) {
-      const pos = (this.after?.positions.array as Float32Array | undefined) ?? face.mesh.positions;
-      const c = face.model.landmarkCentroid(pos, focus.target);
+      const c = face.model.landmarkCentroid(positions ?? face.mesh.positions, focus.target);
       // Move from the face centre towards the feature as we zoom in.
       const t = clamp((zoom - 1) / 0.6, 0, 1);
       target.x = lerp(center.x, c[0] * sign, t);
       target.y = lerp(center.y, c[1], t);
     }
-    this.animateTo({ yaw: (focus.yaw ?? 0) * sign, pitch: focus.pitch ?? 0, zoom, target }, duration);
+    return { yaw: (focus.yaw ?? 0) * sign, pitch: focus.pitch ?? 0, zoom, target };
+  }
+
+  /** Animates to a camera pose. */
+  focus(focus: Partial<CameraFocus>, duration = 650): void {
+    this.animateTo(this.viewFor(focus, this.after?.positions.array as Float32Array | undefined), duration);
   }
 
   resetView(duration = 600): void {
     this.focus({ yaw: 0, pitch: 0, zoom: 1 }, duration);
-  }
-
-  focusControl(id: keyof typeof CONTROL_BY_ID): void {
-    this.focus(CONTROL_BY_ID[id].focus);
   }
 
   /** Jumps to an exact camera state (as returned by {@link currentView}). */
@@ -303,20 +365,15 @@ export class FaceRenderer {
       this.invalidate();
       return;
     }
-    this.tween = {
-      from: { ...this.view, target: this.view.target.clone() },
-      to,
-      start: now(),
-      duration,
-    };
+    this.tween = { from: { ...this.view, target: this.view.target.clone() }, to, start: now(), duration };
     this.kick();
   }
 
-  /** Gentle left-right turntable, used on the reveal screen and in previews. */
-  startTurntable(amplitude = 32, speed = 0.12): void {
+  /** Gentle left-right turntable, or a continuous rotation (`full`) for the wireframe. */
+  startTurntable(amplitude = 32, speed = 0.12, full = false): void {
     this.tween = null;
-    const phase = Math.asin(clamp(this.view.yaw / amplitude, -1, 1));
-    this.turntable = { amplitude, speed, start: now(), phase };
+    const phase = full ? THREE.MathUtils.degToRad(this.view.yaw) : Math.asin(clamp(this.view.yaw / amplitude, -1, 1));
+    this.turntable = { amplitude, speed, start: now(), phase, full };
     this.kick();
   }
 
@@ -329,6 +386,12 @@ export class FaceRenderer {
   playReveal(duration = 2200): void {
     this.reveal = { start: now(), duration };
     this.kick();
+  }
+
+  /** The on-screen angle as a focus request (yaw for the unmirrored face), centred on the face. */
+  currentFocus(): Partial<CameraFocus> {
+    const sign = this.mirrored ? -1 : 1;
+    return { yaw: this.view.yaw * sign, pitch: this.view.pitch, zoom: Math.min(this.view.zoom, 1.2) };
   }
 
   get currentView(): ViewState {
@@ -374,8 +437,9 @@ export class FaceRenderer {
       if (k >= 1) this.tween = null;
       moving = true;
     } else if (this.turntable) {
-      const { amplitude, speed, start, phase } = this.turntable;
-      this.view.yaw = amplitude * Math.sin(phase + ((t - start) / 1000) * speed * Math.PI * 2);
+      const { amplitude, speed, start, phase, full } = this.turntable;
+      const angle = phase + ((t - start) / 1000) * speed * Math.PI * 2;
+      this.view.yaw = full ? THREE.MathUtils.radToDeg(angle) : amplitude * Math.sin(angle);
       moving = true;
     } else if (!this.dragging && (Math.abs(this.velocity.yaw) > 0.02 || Math.abs(this.velocity.pitch) > 0.02)) {
       // Inertia after a flick.
@@ -395,28 +459,28 @@ export class FaceRenderer {
     return moving;
   }
 
-  private placeCamera(aspect: number): void {
-    const { yaw, pitch, zoom, target } = this.view;
-    const distance = this.distanceFor(aspect) / zoom;
+  private placeCamera(camera: THREE.PerspectiveCamera, view: ViewState, aspect: number, fit = this.fit): void {
+    const { yaw, pitch, zoom, target } = view;
+    const distance = this.distanceFor(aspect, fit) / zoom;
     const y = THREE.MathUtils.degToRad(yaw);
     const p = THREE.MathUtils.degToRad(pitch);
-    this.camera.aspect = aspect;
-    this.camera.position.set(
+    camera.aspect = aspect;
+    camera.position.set(
       target.x + distance * Math.cos(p) * Math.sin(y),
       target.y + distance * Math.sin(p),
       target.z + distance * Math.cos(p) * Math.cos(y),
     );
-    this.camera.up.set(0, 1, 0);
-    this.camera.lookAt(target);
-    this.camera.updateProjectionMatrix();
+    camera.up.set(0, 1, 0);
+    camera.lookAt(target);
+    camera.updateProjectionMatrix();
   }
 
-  private distanceFor(aspect: number): number {
+  private distanceFor(aspect: number, fit: number): number {
     // Fit the face height, or its width when the viewport is narrow.
     const tanHalf = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
     const byHeight = (this.faceSize.y * 0.5) / tanHalf;
     const byWidth = (this.faceSize.x * 0.5) / (tanHalf * Math.max(aspect, 0.01));
-    return Math.max(byHeight, byWidth) * this.fit;
+    return Math.max(byHeight, byWidth) * fit;
   }
 
   private draw(): void {
@@ -424,45 +488,44 @@ export class FaceRenderer {
     const pr = r.getPixelRatio();
     const W = this.width;
     const H = this.height;
+    r.setRenderTarget(null);
     r.setScissorTest(false);
     r.setViewport(0, 0, W, H);
     r.clear(true, true, true);
 
     if (!this.after || !this.before) {
       this.drawBackground(0, 0, W, H, pr);
-      this.onFrameEnd();
-      return;
-    }
-
-    switch (this.compareMode) {
-      case 'off':
-      case 'original': {
-        const inst = this.compareMode === 'off' ? this.after : this.before;
-        this.drawFace(inst, 0, 0, W, H, pr);
-        break;
-      }
-      case 'split': {
-        const cut = Math.round(W * this.split);
-        r.setScissorTest(true);
-        r.setScissor(0, 0, cut, H);
-        this.drawFace(this.before, 0, 0, W, H, pr);
-        r.setScissor(cut, 0, W - cut, H);
-        this.drawFace(this.after, 0, 0, W, H, pr);
-        r.setScissorTest(false);
-        break;
-      }
-      case 'sideBySide': {
-        const half = Math.floor(W / 2);
-        r.setScissorTest(true);
-        r.setScissor(0, 0, half, H);
-        this.drawFace(this.before, 0, 0, half, H, pr);
-        r.setScissor(half, 0, W - half, H);
-        this.drawFace(this.after, half, 0, W - half, H, pr);
-        r.setScissorTest(false);
-        break;
+    } else if (this.style === 'wireframe') {
+      this.drawWireframe(W, H);
+    } else {
+      switch (this.compareMode) {
+        case 'off':
+        case 'original':
+          this.drawFace(this.compareMode === 'off' ? this.after : this.before, 0, 0, W, H, pr);
+          break;
+        case 'split': {
+          const cut = Math.round(W * this.split);
+          r.setScissorTest(true);
+          r.setScissor(0, 0, cut, H);
+          this.drawFace(this.before, 0, 0, W, H, pr);
+          r.setScissor(cut, 0, W - cut, H);
+          this.drawFace(this.after, 0, 0, W, H, pr);
+          r.setScissorTest(false);
+          break;
+        }
+        case 'sideBySide': {
+          const half = Math.floor(W / 2);
+          r.setScissorTest(true);
+          r.setScissor(0, 0, half, H);
+          this.drawFace(this.before, 0, 0, half, H, pr);
+          r.setScissor(half, 0, W - half, H);
+          this.drawFace(this.after, half, 0, W - half, H, pr);
+          r.setScissorTest(false);
+          break;
+        }
       }
     }
-    this.onFrameEnd();
+    this.options.onFrameEnd?.();
   }
 
   private drawBackground(x: number, y: number, w: number, h: number, pr: number): void {
@@ -473,17 +536,35 @@ export class FaceRenderer {
     this.renderer.render(this.backgroundScene, this.backgroundCamera);
   }
 
+  private showOnly(object: THREE.Object3D | null): void {
+    for (const inst of [this.after, this.before, this.thumb, this.thumbPair]) if (inst) inst.object.visible = inst.object === object;
+    if (this.wire) this.wire.group.visible = object === this.wire.group;
+  }
+
   private drawFace(inst: FaceInstance, x: number, y: number, w: number, h: number, pr: number): void {
     this.drawBackground(x, y, w, h, pr);
     this.renderer.clearDepth();
-    this.after!.object.visible = inst === this.after;
-    this.before!.object.visible = inst === this.before;
+    this.showOnly(inst.object);
     const u = inst.material.uniforms;
     u.uViewport.value.set(w * pr, h * pr);
     u.uViewportOrigin.value.set(x * pr, y * pr);
-    this.placeCamera(w / h);
+    this.placeCamera(this.camera, this.view, w / h);
     this.renderer.setViewport(x, y, w, h);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  private drawWireframe(w: number, h: number): void {
+    const r = this.renderer;
+    r.setViewport(0, 0, w, h);
+    r.setClearColor(0x050505, 1);
+    r.clear(true, true, true);
+    r.setClearColor(STAGE_COLORS[this.theme][1], 1);
+    if (!this.wire) return;
+    this.showOnly(this.wire.group);
+    this.placeCamera(this.camera, this.view, w / h);
+    const d = this.camera.position.distanceTo(this.view.target);
+    this.wire.setDepthRange(d - 8, d + 12);
+    r.render(this.scene, this.camera);
   }
 
   /** Synchronously renders a frame (e.g. right before taking a snapshot). */
@@ -493,16 +574,95 @@ export class FaceRenderer {
     this.draw();
   }
 
+  /**
+   * Renders the face with arbitrary values and camera into an offscreen target and
+   * returns an image URI, without touching what's on screen. Requests are serialised.
+   */
+  renderThumbnail(req: ThumbnailRequest): Promise<string | null> {
+    const job = this.thumbQueue.then(() => this.renderThumbnailNow(req));
+    this.thumbQueue = job.catch(() => null);
+    return job;
+  }
+
+  private async renderThumbnailNow(req: ThumbnailRequest): Promise<string | null> {
+    const face = this.face;
+    const read = this.options.readTarget;
+    if (!face || !read || this.disposed) return null;
+    const r = this.renderer;
+    const pr = r.getPixelRatio();
+    const W = Math.max(1, Math.round(req.width * pr));
+    const H = Math.max(1, Math.round(req.height * pr));
+    if (!this.thumb) {
+      this.thumb = this.createInstance(face);
+      this.root.add(this.thumb.object);
+    }
+    const panels: { inst: FaceInstance; values: ControlValues; x: number; w: number }[] = [];
+    if (req.pair) {
+      if (!this.thumbPair) {
+        this.thumbPair = this.createInstance(face);
+        this.root.add(this.thumbPair.object);
+      }
+      const gap = Math.max(2, Math.round(pr * 1.5));
+      const half = Math.floor((W - gap) / 2);
+      panels.push({ inst: this.thumbPair, values: req.pair, x: 0, w: half });
+      panels.push({ inst: this.thumb, values: req.values, x: half + gap, w: W - half - gap });
+    } else {
+      panels.push({ inst: this.thumb, values: req.values, x: 0, w: W });
+    }
+    for (const p of panels) this.applyInstanceValues(p.inst, p.values, true);
+    this.applyTheme(req.theme ?? this.theme);
+
+    const target = new THREE.WebGLRenderTarget(W, H, { depthBuffer: true });
+    try {
+      // A white background shows through the gap between a pair.
+      r.setClearColor(0xffffff, 1);
+      r.setScissorTest(false);
+      r.setRenderTarget(target);
+      r.clear(true, true, true);
+      const bg = (this.background.material as THREE.ShaderMaterial).uniforms;
+      for (const { inst, x, w } of panels) {
+        target.viewport.set(x, 0, w, H);
+        target.scissor.set(x, 0, w, H);
+        target.scissorTest = true;
+        r.setRenderTarget(target);
+        bg.uViewport.value.set(w, H);
+        bg.uViewportOrigin.value.set(x, 0);
+        r.render(this.backgroundScene, this.backgroundCamera);
+        r.clearDepth();
+        this.showOnly(inst.object);
+        inst.material.uniforms.uViewport.value.set(w, H);
+        inst.material.uniforms.uViewportOrigin.value.set(x, 0);
+        inst.material.uniforms.uReveal.value = 1;
+        this.placeCamera(this.thumbCamera, this.viewFor(req.focus, inst.positions.array as Float32Array), w / H, req.fit ?? 1.1);
+        r.render(this.scene, this.thumbCamera);
+      }
+      target.viewport.set(0, 0, W, H);
+      target.scissorTest = false;
+      r.setRenderTarget(target);
+      return await read(r, target);
+    } finally {
+      r.setRenderTarget(null);
+      target.dispose();
+      this.applyTheme();
+      this.invalidate();
+    }
+  }
+
   // ------------------------------------------------------------------ cleanup
 
   private disposeFace(): void {
-    for (const inst of [this.after, this.before]) {
+    for (const inst of [this.after, this.before, this.thumb, this.thumbPair]) {
       if (!inst) continue;
       this.root.remove(inst.object);
       inst.geometry.dispose();
       inst.material.dispose();
     }
-    this.after = this.before = null;
+    if (this.wire) {
+      this.root.remove(this.wire.group);
+      this.wire.dispose();
+    }
+    this.after = this.before = this.thumb = this.thumbPair = null;
+    this.wire = null;
     this.face = null;
   }
 
@@ -516,10 +676,11 @@ export class FaceRenderer {
   }
 }
 
+/** Whether the geometry must be recomputed (skin and crease controls only change shader uniforms). */
 function shapeKeysDiffer(a: ControlValues, b: ControlValues): boolean {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof ControlValues>;
   for (const k of keys) {
-    if (k.startsWith('skin')) continue;
+    if (!isShapeControlId(k)) continue;
     if ((a[k] ?? 0) !== (b[k] ?? 0)) return true;
   }
   return false;
@@ -528,5 +689,3 @@ function shapeKeysDiffer(a: ControlValues, b: ControlValues): boolean {
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-
-export { ACCENT };

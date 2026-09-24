@@ -7,8 +7,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ..deps import DbDep, Services, ServicesDep, UserDep
-from ..models import FaceModel, Look
-from ..schemas import FaceModelOut, FaceModelSummaryOut, MeshOut, TexturesOut
+from ..models import AiRender, FaceModel, Look, Scan
+from ..schemas import FaceModelOut, FaceModelSummaryOut, HeadShellOut, MeshOut, TexturesOut
 
 router = APIRouter(prefix="/face-models", tags=["face models"])
 
@@ -40,16 +40,20 @@ def full_out(svc: Services, face: FaceModel) -> FaceModelOut:
             uvs=mesh["uvs"],
             indices=mesh["indices"],
             landmark_count=mesh["landmarkCount"],
+            head=HeadShellOut.model_validate(mesh["head"]) if mesh.get("head") else None,
         ),
         textures=TexturesOut(
             albedo=storage.url(f"{prefix}/albedo.jpg"),
             smooth=storage.url(f"{prefix}/smooth.jpg"),
             mask=storage.url(f"{prefix}/mask.png"),
+            eyes=storage.url(f"{prefix}/eyes.jpg") if model.get("eyeTexture") else None,
         ),
         atlas_size=model.get("atlasSize", 1024),
         skin_tone=model.get("skinTone", [0.8, 0.65, 0.58]),
         views=model.get("views", {}),
         quality=model.get("quality", {}),
+        eyes=model.get("eyes"),
+        eye_texture=model.get("eyeTexture"),
     )
 
 
@@ -75,10 +79,16 @@ def get_face_model(face_id: str, user: UserDep, svc: ServicesDep, db: DbDep) -> 
 
 @router.delete("/{face_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_face_model(face_id: str, user: UserDep, svc: ServicesDep, db: DbDep) -> None:
-    """Deletes a face model, its textures and the looks made on it."""
+    """Deletes a face model, its textures, the looks made on it and the scan photos it came from."""
     face = _owned(db, user.id, face_id)
     db.execute(delete(Look).where(Look.user_id == user.id, Look.face_model_id == face.id))
+    db.execute(delete(AiRender).where(AiRender.user_id == user.id, AiRender.face_model_id == face.id))
+    scan = db.get(Scan, face.scan_id)
+    if scan is not None and scan.user_id == user.id:
+        db.delete(scan)
     db.delete(face)
     db.commit()
     svc.storage.delete_prefix(face.storage_prefix)
     svc.storage.delete_prefix(f"users/{user.id}/looks/{face.id}")
+    svc.storage.delete_prefix(f"users/{user.id}/scans/{face.scan_id}")
+    svc.storage.delete_prefix(f"users/{user.id}/ai/{face.id}")

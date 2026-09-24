@@ -4,6 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DEMO_FACE } from '../three/demoFace';
 import {
   ApiError,
+  type AiRender,
+  type AiStatus,
   type ApiClient,
   type AuthResult,
   type CaptureView,
@@ -223,6 +225,14 @@ export class DemoApi implements ApiClient {
     look.updatedAt = new Date().toISOString();
     await this.save();
     return look;
+  }
+
+  async aiStatus(): Promise<AiStatus> {
+    return { enabled: false, provider: null, remainingToday: 0 };
+  }
+
+  async createAiRender(): Promise<AiRender> {
+    throw new ApiError('데모 모드에서는 AI 고화질 보기를 쓸 수 없어요.', 503);
   }
 
   async deleteLook(lookId: string) {

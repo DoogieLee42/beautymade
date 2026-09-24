@@ -38,7 +38,8 @@ export default function RootLayout() {
             <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
             <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
             <Stack.Screen name="scan" options={{ animation: 'slide_from_bottom' }} />
-            <Stack.Screen name="look/[id]" />
+            <Stack.Screen name="studio" options={{ contentStyle: { backgroundColor: colors.stage } }} />
+            <Stack.Screen name="compare" options={{ contentStyle: { backgroundColor: colors.stage } }} />
           </Stack>
           <ToastHost />
         </QueryClientProvider>

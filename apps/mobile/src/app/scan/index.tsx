@@ -1,133 +1,196 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Ellipse, Path } from 'react-native-svg';
+import { useRef, useState, type ComponentProps } from 'react';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Button, IconButton, Screen } from '../../components/ui';
+import { Button, Header, TextLink } from '../../components/ui';
+import { useCurrentFace } from '../../hooks/queries';
 import { useCapture } from '../../state/capture';
 import { useSession } from '../../state/session';
 import { colors, radius } from '../../theme';
+import { FaceView, type FaceViewHandle } from '../../three/FaceView';
+import { DEMO_FACE } from '../../three/demoFace';
+import { useFaceThumbnails } from '../../three/thumbnails';
 
-const ANGLES = [
-  { label: '정면', turn: 0 },
-  { label: '왼쪽', turn: -1 },
-  { label: '오른쪽', turn: 1 },
+const EXAMPLES = [
+  { key: 'front', label: '정면', yaw: 0 },
+  { key: 'left', label: '왼쪽 45도', yaw: -45 },
+  { key: 'right', label: '오른쪽 45도', yaw: 45 },
 ] as const;
 
-/** Step 4 of the flow: what the scan is and why three photos. */
-export default function ScanIntro() {
+const TIPS: { icon: ComponentProps<typeof Ionicons>['name']; text: string }[] = [
+  { icon: 'bulb-outline', text: '밝은 조명에서 촬영해주세요' },
+  { icon: 'scan-outline', text: '얼굴이 잘 보이게 해주세요' },
+  { icon: 'glasses-outline', text: '안경은 벗어주세요' },
+  { icon: 'happy-outline', text: '자연스러운 표정을 유지해주세요' },
+];
+
+const AVOID = ['역광이나 강한 그림자', '모자, 마스크, 앞머리로 가려진 얼굴', '흔들리거나 초점이 나간 사진', '너무 멀리서 찍은 사진'];
+
+/** Steps 4-5: scan start + capture guide. */
+export default function ScanGuide() {
+  const hidden = useRef<FaceViewHandle>(null);
+  const [ready, setReady] = useState(false);
+  const [examplesOpen, setExamplesOpen] = useState(false);
+  const insets = useSafeAreaInsets();
   const setSkipped = useSession((s) => s.setSkippedScan);
   const reset = useCapture((s) => s.reset);
+  const current = useCurrentFace();
+  const face = current.data ?? DEMO_FACE;
+
+  const thumbs = useFaceThumbnails(
+    hidden,
+    face.id,
+    ready,
+    Object.fromEntries(
+      EXAMPLES.map((e) => [e.key, { values: {}, focus: { yaw: e.yaw, zoom: 1.02 }, width: 120, height: 150, theme: 'light' as const }]),
+    ),
+  );
+
+  const skip = () => {
+    setSkipped(true);
+    router.replace('/(tabs)');
+  };
 
   return (
-    <Screen
-      dark
-      contentStyle={styles.content}
-      footer={
-        <>
-          <Button
-            title="스캔 시작하기"
-            onPress={() => {
-              reset();
-              router.push('/scan/guide');
-            }}
-            testID="scan-start"
-          />
-          <Button
-            title="나중에 할게요 · 샘플 얼굴로 둘러보기"
-            variant="subtle"
-            size="md"
-            onPress={() => {
-              setSkipped(true);
-              router.replace('/(tabs)');
-            }}
-          />
-        </>
-      }
-    >
-      <StatusBar style="light" />
-      <View style={styles.top}>
-        <IconButton
-          icon="close"
-          label="닫기"
-          tone="dark"
-          onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+    <SafeAreaView edges={['top', 'bottom']} style={styles.root}>
+      <StatusBar style="dark" />
+      <FaceView ref={hidden} face={face} theme="light" interactive={false} quietLoading style={styles.hidden} onReady={() => setReady(true)} />
+      <Header
+        onBack={() => (router.canGoBack() ? router.back() : skip())}
+        right={
+          <Pressable onPress={skip} hitSlop={10}>
+            <Text style={styles.later}>나중에</Text>
+          </Pressable>
+        }
+      />
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Text style={styles.title}>3장의 사진으로{'\n'}내 얼굴을 3D로 만들어요</Text>
+        <Text style={styles.subtitle}>정면, 왼쪽, 오른쪽 각도에서 촬영하면{'\n'}더 정확한 3D 얼굴을 생성할 수 있어요.</Text>
+
+        <View style={styles.examples}>
+          {EXAMPLES.map((e) => (
+            <View key={e.key} style={styles.example}>
+              <View style={styles.exampleImage}>
+                {thumbs[e.key] ? (
+                  <Image source={{ uri: thumbs[e.key] }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+                ) : (
+                  <ActivityIndicator color={colors.muted} />
+                )}
+              </View>
+              <Text style={styles.exampleLabel}>{e.label}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.tips}>
+          <Text style={styles.tipsTitle}>더 좋은 결과를 위해</Text>
+          {TIPS.map((t) => (
+            <View key={t.text} style={styles.tip}>
+              <Ionicons name={t.icon} size={20} color={colors.inkSoft} />
+              <Text style={styles.tipText}>{t.text}</Text>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+
+      <View style={styles.footer}>
+        <Button
+          title="촬영 시작하기"
+          onPress={() => {
+            reset();
+            router.push('/scan/capture');
+          }}
+          testID="scan-start"
         />
+        <TextLink title="예시 보기" onPress={() => setExamplesOpen(true)} />
       </View>
 
-      <View style={styles.hero}>
-        {ANGLES.map((a, i) => (
-          <View key={a.label} style={[styles.angle, i === 0 && styles.angleMain]}>
-            <HeadGlyph turn={a.turn} size={i === 0 ? 78 : 58} />
-            <Text style={styles.angleLabel}>{a.label}</Text>
+      <Modal visible={examplesOpen} transparent animationType="slide" onRequestClose={() => setExamplesOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setExamplesOpen(false)} />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 20 }]}>
+          <View style={styles.handle} />
+          <Text style={styles.sheetTitle}>이렇게 찍어주세요</Text>
+          <View style={styles.examples}>
+            {EXAMPLES.map((e) => (
+              <View key={e.key} style={styles.example}>
+                <View style={[styles.exampleImage, styles.good]}>
+                  {thumbs[e.key] && <Image source={{ uri: thumbs[e.key] }} style={StyleSheet.absoluteFill} contentFit="cover" />}
+                  <View style={styles.badge}>
+                    <Ionicons name="checkmark" size={12} color="#FFFFFF" />
+                  </View>
+                </View>
+                <Text style={styles.exampleLabel}>{e.label}</Text>
+              </View>
+            ))}
           </View>
-        ))}
-      </View>
-
-      <Text style={styles.title}>내 얼굴을{'\n'}3D로 만들어볼까요?</Text>
-      <Text style={styles.body}>정면, 왼쪽, 오른쪽 사진 3장이면 돼요.{'\n'}30초면 충분해요.</Text>
-
-      <View style={styles.points}>
-        <Point icon="scan-outline" text="얼굴 특징점 478개로 입체 형태를 복원해요" />
-        <Point icon="color-palette-outline" text="3장의 사진을 합쳐 실제 피부 질감을 입혀요" />
-        <Point icon="lock-closed-outline" text="사진은 3D 생성에만 쓰이고, 언제든 삭제할 수 있어요" />
-      </View>
-    </Screen>
-  );
-}
-
-function Point({ icon, text }: { icon: 'scan-outline' | 'color-palette-outline' | 'lock-closed-outline'; text: string }) {
-  return (
-    <View style={styles.point}>
-      <View style={styles.pointIcon}>
-        <Ionicons name={icon} size={18} color={colors.accent} />
-      </View>
-      <Text style={styles.pointText}>{text}</Text>
-    </View>
-  );
-}
-
-/** Minimal head outline, optionally turned left (-1) or right (1). */
-export function HeadGlyph({ turn, size }: { turn: -1 | 0 | 1; size: number }) {
-  const nose = 50 + turn * 13;
-  return (
-    <Svg width={size} height={size * 1.2} viewBox="0 0 100 120">
-      <Ellipse cx={50 + turn * 3} cy={58} rx={turn ? 31 : 34} ry={44} stroke={colors.stageText} strokeWidth={3} fill="none" opacity={0.9} />
-      <Path d={`M ${nose} 50 L ${nose + turn * 6} 70 L ${nose - turn} 74`} stroke={colors.accent} strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-      <Path d={`M ${38 + turn * 9} 46 h 8 M ${56 + turn * 9} 46 h 8`} stroke={colors.stageText} strokeWidth={3} strokeLinecap="round" />
-      <Path d={`M ${42 + turn * 8} 88 q 8 5 16 0`} stroke={colors.stageText} strokeWidth={3} fill="none" strokeLinecap="round" />
-    </Svg>
+          <Text style={styles.avoidTitle}>이런 사진은 피해주세요</Text>
+          {AVOID.map((a) => (
+            <View key={a} style={styles.tip}>
+              <Ionicons name="close-circle-outline" size={20} color={colors.danger} />
+              <Text style={styles.tipText}>{a}</Text>
+            </View>
+          ))}
+          <Button title="확인" onPress={() => setExamplesOpen(false)} style={{ marginTop: 18 }} />
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { paddingTop: 4 },
-  top: { alignItems: 'flex-end' },
-  hero: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 14, marginTop: 8, marginBottom: 30 },
-  angle: {
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: radius.lg,
-    backgroundColor: colors.stageRaised,
-    borderWidth: 1,
-    borderColor: colors.stageLine,
-  },
-  angleMain: { borderColor: 'rgba(255,122,160,0.5)' },
-  angleLabel: { color: colors.stageMuted, fontSize: 12, fontWeight: '700' },
-  title: { color: colors.stageText, fontSize: 30, lineHeight: 38, fontWeight: '800', letterSpacing: -0.8 },
-  body: { color: colors.stageMuted, fontSize: 16, lineHeight: 24, marginTop: 10 },
-  points: { gap: 14, marginTop: 28 },
-  point: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  pointIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  root: { flex: 1, backgroundColor: colors.bg },
+  hidden: { position: 'absolute', width: 4, height: 4, opacity: 0, top: 0, left: 0 },
+  later: { fontSize: 14, color: colors.muted, fontWeight: '600' },
+  content: { paddingHorizontal: 20, paddingBottom: 20 },
+  title: { fontSize: 25, lineHeight: 34, fontWeight: '700', color: colors.ink, textAlign: 'center', letterSpacing: -0.6, marginTop: 10 },
+  subtitle: { fontSize: 15, lineHeight: 22, color: colors.muted, textAlign: 'center', marginTop: 10 },
+  examples: { flexDirection: 'row', gap: 8, marginTop: 26 },
+  example: { flex: 1, alignItems: 'center', gap: 10 },
+  exampleImage: {
+    width: '100%',
+    aspectRatio: 0.8,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#E4E4E7',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,122,160,0.12)',
   },
-  pointText: { flex: 1, color: colors.stageText, fontSize: 14, lineHeight: 20 },
+  exampleLabel: { fontSize: 14, fontWeight: '600', color: colors.ink },
+  tips: { marginTop: 26, backgroundColor: colors.surfaceMuted, borderRadius: radius.lg, padding: 18, gap: 14 },
+  tipsTitle: { fontSize: 15, fontWeight: '700', color: colors.ink, marginBottom: 2 },
+  tip: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  tipText: { fontSize: 14, color: colors.inkSoft },
+  footer: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 6, gap: 8 },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: colors.scrim },
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: colors.bg,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    gap: 12,
+  },
+  handle: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.line, marginBottom: 6 },
+  sheetTitle: { fontSize: 20, fontWeight: '700', color: colors.ink },
+  good: { borderWidth: 2, borderColor: colors.success },
+  badge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avoidTitle: { fontSize: 15, fontWeight: '700', color: colors.ink, marginTop: 10 },
 });

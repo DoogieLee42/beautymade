@@ -9,14 +9,17 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-nat
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { getApi } from '../../api';
-import { toast } from '../../components/ui';
+import { Header, toast } from '../../components/ui';
 import { errorMessage, useCurrentFace, useMe } from '../../hooks/queries';
 import { confirm } from '../../lib/dialog';
 import { formatDate } from '../../lib/format';
 import { useSession } from '../../state/session';
 import { useStudio } from '../../state/studio';
 import { forgetFace } from '../../three/faceAssets';
-import { colors, radius, shadow } from '../../theme';
+import { colors, radius } from '../../theme';
+
+/** react-native-web colours the thumb separately. */
+const WEB_SWITCH = { activeThumbColor: '#FFFFFF' } as object;
 
 const VIEW_LABEL: Record<string, string> = { front: '정면', left: '왼쪽', right: '오른쪽' };
 
@@ -66,10 +69,10 @@ export default function Profile() {
   return (
     <SafeAreaView edges={['top']} style={styles.root}>
       <StatusBar style="dark" />
+      <Header title="프로필" back={false} />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>프로필</Text>
 
-        <View style={[styles.card, shadow, styles.account]}>
+        <View style={[styles.card, styles.account]}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{account?.name?.slice(0, 1) ?? '?'}</Text>
           </View>
@@ -85,7 +88,7 @@ export default function Profile() {
         </View>
 
         <Text style={styles.section}>내 얼굴 데이터</Text>
-        <View style={[styles.card, shadow]}>
+        <View style={styles.card}>
           {faceData ? (
             <>
               <View style={styles.faceRow}>
@@ -112,18 +115,18 @@ export default function Profile() {
         </View>
         <Text style={styles.note}>원본 사진과 3D 얼굴은 내 계정에만 저장되고, 삭제하면 서버에서도 즉시 지워져요.</Text>
 
-        <Text style={styles.section}>Studio 설정</Text>
-        <View style={[styles.card, shadow]}>
+        <Text style={styles.section}>스튜디오 설정</Text>
+        <View style={styles.card}>
           <Row icon="swap-horizontal" label="거울 모드" hint="거울에서 보던 방향으로 보여줘요">
-            <Switch value={mirrored} onValueChange={toggleMirrored} trackColor={{ true: colors.primary }} />
+            <Switch value={mirrored} onValueChange={toggleMirrored} trackColor={{ true: colors.ink, false: '#D9D9DE' }} thumbColor="#FFFFFF" {...WEB_SWITCH} />
           </Row>
           <Row icon="locate-outline" label="부위 자동 포커스" hint="조절하는 부위로 카메라가 이동해요" last>
-            <Switch value={autoFocus} onValueChange={toggleAutoFocus} trackColor={{ true: colors.primary }} />
+            <Switch value={autoFocus} onValueChange={toggleAutoFocus} trackColor={{ true: colors.ink, false: '#D9D9DE' }} thumbColor="#FFFFFF" {...WEB_SWITCH} />
           </Row>
         </View>
 
         <Text style={styles.section}>계정</Text>
-        <View style={[styles.card, shadow]}>
+        <View style={styles.card}>
           <Row
             icon="server-outline"
             label={apiMode === 'demo' ? '실제 서버에 연결하기' : '데모 모드로 전환'}
@@ -181,16 +184,21 @@ function Row({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: 20, paddingBottom: 40 },
-  title: { fontSize: 26, fontWeight: '800', color: colors.ink, letterSpacing: -0.6, marginBottom: 16 },
-  card: { backgroundColor: colors.surface, borderRadius: radius.lg, paddingHorizontal: 16 },
+  content: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 40 },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    paddingHorizontal: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#DCDCE0',
+  },
   account: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 16 },
-  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 20, fontWeight: '800', color: colors.primaryInk },
-  accountName: { fontSize: 17, fontWeight: '800', color: colors.ink },
-  demoPill: { paddingHorizontal: 10, height: 24, borderRadius: 12, backgroundColor: colors.warningSoft, justifyContent: 'center' },
-  demoPillText: { fontSize: 12, fontWeight: '800', color: colors.warning },
-  section: { fontSize: 14, fontWeight: '800', color: colors.inkSoft, marginTop: 26, marginBottom: 10 },
+  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { fontSize: 19, fontWeight: '700', color: '#FFFFFF' },
+  accountName: { fontSize: 17, fontWeight: '700', color: colors.ink },
+  demoPill: { paddingHorizontal: 10, height: 24, borderRadius: 12, backgroundColor: colors.surfaceAlt, justifyContent: 'center' },
+  demoPillText: { fontSize: 12, fontWeight: '700', color: colors.inkSoft },
+  section: { fontSize: 14, fontWeight: '700', color: colors.inkSoft, marginTop: 26, marginBottom: 10 },
   faceRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
   faceThumb: { width: 56, height: 56, borderRadius: 28 },
   faceThumbEmpty: { backgroundColor: colors.stageRaised, alignItems: 'center', justifyContent: 'center' },

@@ -1,132 +1,164 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { lookCategories, type CategoryId } from '@beautymade/face-engine';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { LookCard } from '../../components/looks/LookCard';
-import { Button } from '../../components/ui';
-import { useLooks } from '../../hooks/queries';
+import type { Look } from '../../api/types';
+import { LookRow } from '../../components/looks/LookRow';
+import { ActionSheet, Button, Chip, Header, PromptSheet, toast } from '../../components/ui';
+import { errorMessage, useDeleteLook, useLooks, useUpdateLook } from '../../hooks/queries';
+import { confirm } from '../../lib/dialog';
 import { useStudio } from '../../state/studio';
-import { colors, radius } from '../../theme';
+import { colors } from '../../theme';
 
-/** Step 14: saved looks, reopened or compared. */
+type Filter = 'all' | CategoryId;
+
+const FILTERS: { value: Filter; label: string }[] = [
+  { value: 'all', label: '전체' },
+  { value: 'eyes', label: '눈' },
+  { value: 'nose', label: '코' },
+  { value: 'contour', label: '윤곽' },
+  { value: 'lips', label: '입술' },
+  { value: 'skin', label: '피부' },
+  { value: 'lifting', label: '리프팅' },
+];
+
+/** Step 14: saved looks, reopened in the studio or compared (design 8). */
 export default function Looks() {
   const looks = useLooks();
-  const [selecting, setSelecting] = useState(false);
-  const [selected, setSelected] = useState<string[]>([]);
+  const update = useUpdateLook();
+  const remove = useDeleteLook();
+  const [filter, setFilter] = useState<Filter>('all');
+  const [menuFor, setMenuFor] = useState<Look | null>(null);
+  const [renaming, setRenaming] = useState<Look | null>(null);
   const data = looks.data ?? [];
+  const shown = filter === 'all' ? data : data.filter((l) => lookCategories(l.values).includes(filter));
 
-  const toggle = (id: string) =>
-    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length >= 2 ? [s[1], id] : [...s, id]));
+  const openInStudio = (look: Look) => {
+    useStudio.getState().loadLook(look);
+    router.push('/studio');
+  };
 
-  const compare = () => {
-    const [a, b] = selected;
-    setSelecting(false);
-    setSelected([]);
-    router.push({ pathname: '/look/[id]', params: { id: a, compare: b } });
+  const newLook = () => {
+    useStudio.getState().startFresh();
+    router.push('/studio');
+  };
+
+  const onDelete = async (look: Look) => {
+    if (!(await confirm('룩 삭제', `‘${look.name}’을(를) 삭제할까요?`, '삭제', true))) return;
+    try {
+      await remove.mutateAsync(look.id);
+      if (useStudio.getState().look?.id === look.id) useStudio.getState().startFresh();
+      toast('룩을 삭제했어요');
+    } catch (e) {
+      toast(errorMessage(e), { tone: 'error' });
+    }
+  };
+
+  const onRename = async (name: string) => {
+    if (!renaming) return;
+    try {
+      await update.mutateAsync({ id: renaming.id, patch: { name } });
+      if (useStudio.getState().look?.id === renaming.id) {
+        useStudio.setState((s) => ({ look: s.look && { ...s.look, name } }));
+      }
+      setRenaming(null);
+    } catch (e) {
+      toast(errorMessage(e), { tone: 'error' });
+    }
   };
 
   return (
     <SafeAreaView edges={['top']} style={styles.root}>
       <StatusBar style="dark" />
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>내 룩</Text>
-          <Text style={styles.subtitle}>{data.length ? `${data.length}개의 버전을 저장했어요` : '저장한 버전이 여기에 모여요'}</Text>
-        </View>
-        {data.length >= 2 && (
-          <Pressable
-            onPress={() => {
-              setSelecting((s) => !s);
-              setSelected([]);
-            }}
-            style={[styles.compareToggle, selecting && styles.compareToggleOn]}
-            testID="compare-mode"
-          >
-            <Ionicons name="git-compare-outline" size={16} color={selecting ? '#fff' : colors.ink} />
-            <Text style={[styles.compareText, selecting && { color: '#fff' }]}>{selecting ? '취소' : '비교하기'}</Text>
+      <Header
+        title="내가 저장한 룩"
+        onBack={() => router.navigate('/(tabs)')}
+        right={
+          <Pressable onPress={newLook} hitSlop={10} accessibilityLabel="새 룩 만들기" testID="new-look">
+            <Ionicons name="add" size={30} color={colors.ink} />
           </Pressable>
-        )}
-      </View>
+        }
+      />
 
-      {selecting && <Text style={styles.selectHint}>비교할 룩 2개를 골라주세요 ({selected.length}/2)</Text>}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.noGrow} contentContainerStyle={styles.filters}>
+        {FILTERS.map((f) => (
+          <Chip key={f.value} label={f.label} selected={filter === f.value} onPress={() => setFilter(f.value)} style={styles.chip} />
+        ))}
+      </ScrollView>
 
       {looks.isLoading ? (
-        <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
+        <ActivityIndicator style={{ marginTop: 48 }} color={colors.ink} />
       ) : data.length === 0 ? (
         <View style={styles.empty}>
           <View style={styles.emptyIcon}>
-            <Ionicons name="albums-outline" size={30} color={colors.primary} />
+            <Ionicons name="albums-outline" size={28} color={colors.ink} />
           </View>
           <Text style={styles.emptyTitle}>아직 저장한 룩이 없어요</Text>
-          <Text style={styles.emptyBody}>Studio에서 마음에 드는 버전을 만들고{'\n'}저장 버튼을 눌러보세요.</Text>
-          <Button
-            title="Studio로 가기"
-            icon="sparkles"
-            size="md"
-            onPress={() => {
-              useStudio.getState().setTab('presets');
-              router.push('/(tabs)/studio');
-            }}
-            style={{ marginTop: 16, alignSelf: 'center' }}
-          />
+          <Text style={styles.emptyBody}>스튜디오에서 마음에 드는 버전을 만들고{'\n'}저장해보세요.</Text>
+          <Button title="스튜디오로 가기" size="md" onPress={newLook} style={styles.emptyButton} />
         </View>
       ) : (
         <FlatList
-          data={data}
+          data={shown}
           keyExtractor={(l) => l.id}
-          numColumns={2}
-          columnWrapperStyle={styles.column}
-          contentContainerStyle={styles.grid}
+          contentContainerStyle={styles.list}
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
           refreshControl={<RefreshControl refreshing={looks.isRefetching} onRefresh={() => looks.refetch()} />}
+          ListEmptyComponent={<Text style={styles.noMatch}>이 카테고리로 저장한 룩이 없어요.</Text>}
           renderItem={({ item }) => (
-            <LookCard
+            <LookRow
               look={item}
-              style={styles.card}
-              selectable={selecting}
-              selected={selected.includes(item.id)}
-              onPress={() => (selecting ? toggle(item.id) : router.push({ pathname: '/look/[id]', params: { id: item.id } }))}
+              onOpen={() => openInStudio(item)}
+              onCompare={() => router.push({ pathname: '/compare', params: { lookId: item.id } })}
+              onMenu={() => setMenuFor(item)}
             />
           )}
         />
       )}
 
-      {selecting && selected.length === 2 && (
-        <View style={styles.compareBar}>
-          <Button title="두 룩 나란히 비교하기" icon="git-compare" onPress={compare} testID="compare-go" />
-        </View>
-      )}
+      <ActionSheet
+        visible={!!menuFor}
+        title={menuFor?.name}
+        onClose={() => setMenuFor(null)}
+        actions={
+          menuFor
+            ? [
+                { label: '스튜디오에서 편집', icon: 'color-wand-outline', onPress: () => openInStudio(menuFor) },
+                { label: '이름 바꾸기', icon: 'create-outline', onPress: () => setRenaming(menuFor), testID: 'rename-look' },
+                { label: '삭제', icon: 'trash-outline', destructive: true, onPress: () => onDelete(menuFor), testID: 'delete-look' },
+              ]
+            : []
+        }
+      />
+      <PromptSheet
+        visible={!!renaming}
+        title="이름 바꾸기"
+        label="룩 이름"
+        initialValue={renaming?.name ?? ''}
+        confirmLabel="저장"
+        busy={update.isPending}
+        onSubmit={onRename}
+        onClose={() => setRenaming(null)}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12 },
-  title: { fontSize: 26, fontWeight: '800', color: colors.ink, letterSpacing: -0.6 },
-  subtitle: { fontSize: 13, color: colors.muted, marginTop: 2 },
-  compareToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    height: 36,
-    paddingHorizontal: 14,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.surface,
-  },
-  compareToggleOn: { backgroundColor: colors.ink, borderColor: colors.ink },
-  compareText: { fontSize: 13, fontWeight: '700', color: colors.ink },
-  selectHint: { paddingHorizontal: 20, marginBottom: 8, fontSize: 13, color: colors.primary, fontWeight: '600' },
-  grid: { paddingHorizontal: 14, paddingBottom: 110 },
-  column: { gap: 12, paddingHorizontal: 6, marginBottom: 12 },
-  card: { flex: 1 },
-  empty: { alignItems: 'center', paddingHorizontal: 32, marginTop: 72 },
-  emptyIcon: { width: 68, height: 68, borderRadius: 34, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
-  emptyTitle: { fontSize: 18, fontWeight: '800', color: colors.ink, marginTop: 16 },
-  emptyBody: { fontSize: 14, lineHeight: 21, color: colors.inkSoft, textAlign: 'center', marginTop: 6 },
-  compareBar: { position: 'absolute', left: 20, right: 20, bottom: 16 },
+  noGrow: { flexGrow: 0 },
+  filters: { paddingHorizontal: 20, gap: 8, paddingTop: 6, paddingBottom: 10 },
+  chip: { minWidth: 64, height: 38 },
+  list: { paddingHorizontal: 20, paddingBottom: 24 },
+  separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line },
+  noMatch: { textAlign: 'center', color: colors.muted, fontSize: 14, marginTop: 40 },
+  empty: { alignItems: 'center', paddingHorizontal: 32, marginTop: 80 },
+  emptyIcon: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center' },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.ink, marginTop: 16 },
+  emptyBody: { fontSize: 14, lineHeight: 21, color: colors.muted, textAlign: 'center', marginTop: 6 },
+  emptyButton: { marginTop: 18, alignSelf: 'center', paddingHorizontal: 28 },
 });

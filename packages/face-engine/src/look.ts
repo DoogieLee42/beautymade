@@ -1,4 +1,14 @@
-import { CONTROL_BY_ID, CONTROLS, isControlId, type ControlId } from './controls';
+import {
+  CATEGORIES,
+  CONTROL_BY_ID,
+  CONTROLS,
+  creaseHeightMm,
+  creaseLine,
+  isControlId,
+  type CategoryId,
+  type Control,
+  type ControlId,
+} from './controls';
 import { clamp } from './math';
 import { PRESETS, type ControlValues, type Preset } from './presets';
 
@@ -84,10 +94,22 @@ export interface ChangeSummary {
   text: string;
 }
 
+/** Crease height and line type only shape the double eyelid; they're reported with it. */
+const CREASE_DETAILS: readonly ControlId[] = ['creaseHeight', 'creaseShape'];
+
+function changeText(control: Control, values: ControlValues): string {
+  const v = values[control.id] ?? 0;
+  if (control.id === 'creaseDepth') {
+    const height = creaseHeightMm(values.creaseHeight ?? 0).toFixed(1);
+    return `${control.label} ${creaseLine(values.creaseShape ?? 0)} ${height}mm`;
+  }
+  return `${control.label} ${control.readout ? control.readout(v) : formatValue(v)}`;
+}
+
 /** Largest adjustments first, in catalogue order for ties. */
 export function summarizeChanges(values: ControlValues, limit = Infinity): ChangeSummary[] {
-  return CONTROLS.filter((c) => Math.abs(values[c.id] ?? 0) >= 0.005)
-    .map((c) => ({ id: c.id, label: c.label, value: values[c.id] ?? 0, text: `${c.label} ${formatValue(values[c.id] ?? 0)}` }))
+  return CONTROLS.filter((c) => Math.abs(values[c.id] ?? 0) >= 0.005 && !CREASE_DETAILS.includes(c.id))
+    .map((c) => ({ id: c.id, label: c.label, value: values[c.id] ?? 0, text: changeText(c, values) }))
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
     .slice(0, limit);
 }
@@ -97,10 +119,47 @@ export function describeLook(values: ControlValues, limit = 3): string {
   return changes.length ? changes.map((c) => c.text).join(' · ') : '변경 없음';
 }
 
+/** Slider readout used in the studio: "0.2", "-0.1", "0". */
+export function formatDecimal(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return rounded === 0 ? '0' : rounded.toFixed(1);
+}
+
+/** A control's slider readout: real units where it has them ("2.5mm", "인아웃"), else the value. */
+export function formatControlValue(id: ControlId, value: number): string {
+  const readout = CONTROL_BY_ID[id].readout;
+  return readout ? readout(value) : formatDecimal(value);
+}
+
+/** Categories a look changes, in display order (e.g. for "코 / 턱/윤곽" captions and filters). */
+export function lookCategories(values: ControlValues): CategoryId[] {
+  const touched = new Set(
+    CONTROLS.filter((c) => Math.abs(values[c.id] ?? 0) >= 0.005).map((c) => c.category),
+  );
+  return CATEGORIES.map((c) => c.id).filter((id) => touched.has(id));
+}
+
+export function categoryLabel(id: CategoryId): string {
+  return CATEGORIES.find((c) => c.id === id)?.label ?? id;
+}
+
+/** Short nouns for look names ("갸름형 윤곽", "도톰형 입술"). */
+const LOOK_NOUN: Record<CategoryId, string> = {
+  eyes: '눈',
+  nose: '코',
+  contour: '윤곽',
+  lips: '입술',
+  skin: '피부',
+  lifting: '리프팅',
+};
+
 /** Default name for a new look: an active preset's name, else the dominant change. */
 export function suggestLookName(values: ControlValues): string {
   const preset = activePresets(values)[0];
-  if (preset) return preset.name;
+  if (preset) {
+    const noun = LOOK_NOUN[preset.category];
+    return preset.name.includes(noun) ? preset.name : `${preset.name} ${noun}`;
+  }
   const top = summarizeChanges(values, 2);
   if (!top.length) return '원본';
   return top.map((c) => c.label.replace(/\s*\(.*\)$/, '')).join(' + ');

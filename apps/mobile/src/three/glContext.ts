@@ -17,14 +17,27 @@ export function createThreeRenderer(gl: ExpoWebGLRenderingContext, pixelRatio: n
   return renderer;
 }
 
-/** JPEG data URL of the current frame, downscaled to `maxWidth`. */
-export async function snapshotToDataUrl(gl: ExpoWebGLRenderingContext, maxWidth = 480): Promise<string | null> {
-  const canvas = gl.canvas as HTMLCanvasElement;
-  if (!canvas?.width) return null;
-  const scale = Math.min(1, maxWidth / canvas.width);
-  const out = document.createElement('canvas');
-  out.width = Math.round(canvas.width * scale);
-  out.height = Math.round(canvas.height * scale);
-  out.getContext('2d')?.drawImage(canvas, 0, 0, out.width, out.height);
-  return out.toDataURL('image/jpeg', 0.85);
+/** Reads an offscreen render target into a JPEG data URL. */
+export async function readRenderTarget(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget): Promise<string | null> {
+  const { width, height } = target;
+  const pixels = new Uint8Array(width * height * 4);
+  renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const image = ctx.createImageData(width, height);
+  // GL rows start at the bottom; images start at the top.
+  const row = width * 4;
+  for (let y = 0; y < height; y++) {
+    image.data.set(pixels.subarray((height - 1 - y) * row, (height - y) * row), y * row);
+  }
+  ctx.putImageData(image, 0, 0);
+  return canvas.toDataURL('image/jpeg', 0.9);
+}
+
+/** Thumbnails are already data URLs on web. */
+export async function toDataUrl(uri: string): Promise<string> {
+  return uri;
 }

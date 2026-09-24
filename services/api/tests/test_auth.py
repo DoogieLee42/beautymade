@@ -50,4 +50,5 @@ def test_delete_account(client: TestClient) -> None:
     headers = signup(client, "gone@example.com")
     assert client.delete("/me", headers=headers).status_code == 204
     assert client.get("/me", headers=headers).status_code == 401
-    assert client.post("/auth/login", json={"email": "gone@example.com", "password": "correct-horse"}).status_code == 401
+    login = client.post("/auth/login", json={"email": "gone@example.com", "password": "correct-horse"})
+    assert login.status_code == 401

@@ -1,53 +1,47 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import type { ComponentProps, ReactNode } from 'react';
+import type { ComponentProps } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { colors, radius } from '../../theme';
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'subtle' | 'dark' | 'light' | 'danger';
+type IconName = ComponentProps<typeof Ionicons>['name'];
+
+/**
+ * primary: black pill (light screens)   white: white pill (dark screens)
+ * outline: white with hairline border   soft: light grey (secondary actions)
+ * ghost / subtle: text-only on light / dark backgrounds
+ */
+type Variant = 'primary' | 'white' | 'outline' | 'soft' | 'ghost' | 'subtle' | 'danger';
 
 export interface ButtonProps {
   title: string;
   onPress?: () => void;
   variant?: Variant;
   size?: 'lg' | 'md' | 'sm';
-  icon?: ComponentProps<typeof Ionicons>['name'];
-  iconRight?: ComponentProps<typeof Ionicons>['name'];
+  icon?: IconName;
+  iconRight?: IconName;
   loading?: boolean;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
-  children?: ReactNode;
   testID?: string;
 }
 
 const palette: Record<Variant, { bg: string; pressed: string; fg: string; border?: string }> = {
-  primary: { bg: colors.primary, pressed: colors.primaryPressed, fg: '#fff' },
-  secondary: { bg: colors.surface, pressed: colors.surfaceAlt, fg: colors.ink, border: colors.line },
-  ghost: { bg: 'transparent', pressed: 'rgba(0,0,0,0.05)', fg: colors.inkSoft },
-  /** Ghost button for dark (stage) backgrounds. */
-  subtle: { bg: 'transparent', pressed: 'rgba(255,255,255,0.06)', fg: 'rgba(247,240,242,0.78)' },
-  dark: { bg: colors.ink, pressed: '#000', fg: '#fff' },
-  light: { bg: 'rgba(255,255,255,0.14)', pressed: 'rgba(255,255,255,0.22)', fg: colors.stageText, border: 'rgba(255,255,255,0.18)' },
-  danger: { bg: colors.dangerSoft, pressed: '#F6D5D5', fg: colors.danger },
+  primary: { bg: colors.primary, pressed: '#2B2B2E', fg: colors.onPrimary },
+  white: { bg: '#FFFFFF', pressed: '#ECECEE', fg: colors.ink },
+  outline: { bg: '#FFFFFF', pressed: colors.surfaceAlt, fg: colors.ink, border: '#DCDCE0' },
+  soft: { bg: colors.surfaceAlt, pressed: '#E7E7E9', fg: colors.ink },
+  ghost: { bg: 'transparent', pressed: 'rgba(0,0,0,0.04)', fg: colors.inkSoft },
+  subtle: { bg: 'transparent', pressed: 'rgba(255,255,255,0.06)', fg: colors.stageMuted },
+  danger: { bg: colors.dangerSoft, pressed: '#F7DADA', fg: colors.danger },
 };
 
 const heights = { lg: 56, md: 48, sm: 38 };
 
-export function Button({
-  title,
-  onPress,
-  variant = 'primary',
-  size = 'lg',
-  icon,
-  iconRight,
-  loading,
-  disabled,
-  style,
-  testID,
-}: ButtonProps) {
+export function Button({ title, onPress, variant = 'primary', size = 'lg', icon, iconRight, loading, disabled, style, testID }: ButtonProps) {
   const p = palette[variant];
   const inactive = disabled || loading;
-  const fontSize = size === 'sm' ? 14 : 16;
+  const fontSize = size === 'sm' ? 14 : size === 'md' ? 15 : 16;
   return (
     <Pressable
       testID={testID}
@@ -63,7 +57,7 @@ export function Button({
           backgroundColor: pressed ? p.pressed : p.bg,
           borderColor: p.border ?? 'transparent',
           borderWidth: p.border ? 1 : 0,
-          opacity: disabled ? 0.45 : 1,
+          opacity: disabled ? 0.4 : 1,
         },
         style,
       ]}
@@ -72,17 +66,40 @@ export function Button({
         <ActivityIndicator color={p.fg} />
       ) : (
         <View style={styles.row}>
-          {icon && <Ionicons name={icon} size={fontSize + 3} color={p.fg} />}
+          {icon && <Ionicons name={icon} size={fontSize + 2} color={p.fg} />}
           <Text style={[styles.label, { color: p.fg, fontSize }]} numberOfLines={1}>
             {title}
           </Text>
-          {iconRight && <Ionicons name={iconRight} size={fontSize + 2} color={p.fg} />}
+          {iconRight && <Ionicons name={iconRight} size={fontSize + 1} color={p.fg} />}
         </View>
       )}
     </Pressable>
   );
 }
 
+/** Underlined text action ("로그인", "예시 보기", "다시 스캔하기"). */
+export function TextLink({
+  title,
+  onPress,
+  tone = 'light',
+  style,
+}: {
+  title: string;
+  onPress?: () => void;
+  tone?: 'light' | 'dark';
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <Pressable onPress={onPress} hitSlop={10} accessibilityRole="link" style={[styles.link, style]}>
+      <Text style={[styles.linkText, { color: tone === 'dark' ? colors.stageText : colors.ink }]}>{title}</Text>
+    </Pressable>
+  );
+}
+
+/**
+ * Round icon button. `dark` floats over the 3D stage (translucent), `light` sits on
+ * white surfaces, `plain` has no background.
+ */
 export function IconButton({
   icon,
   onPress,
@@ -90,23 +107,34 @@ export function IconButton({
   tone = 'light',
   size = 40,
   active,
+  disabled,
   style,
 }: {
-  icon: ComponentProps<typeof Ionicons>['name'];
+  icon: IconName;
   onPress?: () => void;
   label: string;
-  tone?: 'light' | 'dark' | 'plain';
+  tone?: 'light' | 'dark' | 'plain' | 'plainDark';
   size?: number;
   active?: boolean;
+  disabled?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
-  const bg = active ? '#fff' : tone === 'dark' ? 'rgba(20,16,18,0.55)' : tone === 'plain' ? 'transparent' : colors.surface;
-  const fg = active ? colors.ink : tone === 'dark' ? '#fff' : colors.ink;
+  const dark = tone === 'dark' || tone === 'plainDark';
+  const bg = active
+    ? '#FFFFFF'
+    : tone === 'dark'
+      ? 'rgba(18,18,18,0.52)'
+      : tone === 'light'
+        ? colors.surface
+        : 'transparent';
+  const fg = active ? colors.ink : dark ? '#FFFFFF' : colors.ink;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled, selected: !!active }}
       onPress={onPress}
+      disabled={disabled}
       hitSlop={6}
       style={({ pressed }) => [
         {
@@ -116,14 +144,14 @@ export function IconButton({
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: bg,
-          opacity: pressed ? 0.75 : 1,
+          opacity: disabled ? 0.35 : pressed ? 0.7 : 1,
           borderWidth: tone === 'dark' && !active ? StyleSheet.hairlineWidth : 0,
-          borderColor: 'rgba(255,255,255,0.2)',
+          borderColor: 'rgba(255,255,255,0.28)',
         },
         style,
       ]}
     >
-      <Ionicons name={icon} size={size * 0.5} color={fg} />
+      <Ionicons name={icon} size={Math.round(size * 0.52)} color={fg} />
     </Pressable>
   );
 }
@@ -132,4 +160,6 @@ const styles = StyleSheet.create({
   base: { borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   label: { fontWeight: '700', letterSpacing: -0.2 },
+  link: { alignSelf: 'center', paddingVertical: 6 },
+  linkText: { fontSize: 14, fontWeight: '600', textDecorationLine: 'underline' },
 });

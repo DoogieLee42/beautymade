@@ -34,13 +34,13 @@ const styles = StyleSheet.create({
   wrap: { gap: 6 },
   label: { fontSize: 13, fontWeight: '600', color: colors.inkSoft },
   input: {
-    height: 52,
+    height: 54,
     borderRadius: radius.md,
-    borderWidth: 1.5,
+    borderWidth: 1,
     paddingHorizontal: 16,
     fontSize: 16,
     color: colors.ink,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceMuted,
   },
   error: { fontSize: 12, color: colors.danger },
 });

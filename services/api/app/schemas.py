@@ -110,17 +110,62 @@ class ScanOut(Schema):
 # -- face models -----------------------------------------------------------------------------
 
 
+class HeadShellOut(Schema):
+    """How the app stitches the face to the head shell (see app/reconstruction/head.py)."""
+
+    oval: list[int]
+    rim: list[int]
+    ring_uvs: list[float]
+    weld: list[int]
+
+
 class MeshOut(Schema):
     positions: list[float]
     uvs: list[float]
     indices: list[int]
     landmark_count: int
+    head: HeadShellOut | None = None
 
 
 class TexturesOut(Schema):
     albedo: str
     smooth: str
     mask: str
+    eyes: str | None = None  # the clean eyeball atlas (see app/reconstruction/eyeball.py)
+
+
+class EyeMapOut(Schema):
+    u: list[float]
+    v: list[float]
+
+
+class EyeTextureOut(Schema):
+    """Where a model-space point p falls in the eyeball atlas: u = U . (p, 1), v = V . (p, 1)."""
+
+    width: int
+    height: int
+    right: EyeMapOut
+    left: EyeMapOut
+
+
+class EyeMeasurementsOut(Schema):
+    width_mm: float
+    height_mm: float
+    tilt_deg: float
+    mrd1_mm: float
+    mrd2_mm: float
+
+
+class EyeAnalysisOut(Schema):
+    """Estimated from the front photo, with the iris width as the ruler (see app/reconstruction/eyes.py)."""
+
+    iris_diameter_mm: float
+    right: EyeMeasurementsOut
+    left: EyeMeasurementsOut
+    intercanthal_mm: float
+    interpupillary_mm: float
+    outer_canthal_mm: float | None = None  # missing on the first models with eye measurements
+    intercanthal_ratio: float
 
 
 class FaceModelSummaryOut(Schema):
@@ -136,6 +181,9 @@ class FaceModelOut(FaceModelSummaryOut):
     skin_tone: list[float]
     views: dict[str, dict[str, float]]
     quality: dict
+    # Missing on models made before eye measurements existed, or when they weren't reliable.
+    eyes: EyeAnalysisOut | None = None
+    eye_texture: EyeTextureOut | None = None
 
 
 class MeOut(Schema):
@@ -198,3 +246,27 @@ class LookOut(Schema):
     thumbnail_url: str | None
     created_at: datetime
     updated_at: datetime
+
+
+# -- AI previews -----------------------------------------------------------------------------
+
+
+class AiStatusOut(Schema):
+    enabled: bool
+    provider: str | None
+    remaining_today: int
+
+
+class AiRenderIn(Schema):
+    face_model_id: str
+    values: dict[str, float] = Field(default_factory=dict)
+    angle: Literal["front", "left", "right", "custom"] = "front"
+    # JPEG/PNG data URL of the edited 3D preview at the wanted angle.
+    guide: str = Field(max_length=4_000_000)
+
+
+class AiRenderOut(Schema):
+    id: str
+    url: str
+    cached: bool
+    remaining_today: int

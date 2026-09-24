@@ -1,20 +1,28 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import type { CameraFocus, ControlValues } from '@beautymade/face-engine';
 import { GLView, type ExpoWebGLRenderingContext } from 'expo-gl';
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
-import { ActivityIndicator, PixelRatio, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, PixelRatio, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import type { FaceModel } from '../api/types';
 import { colors } from '../theme';
-import { FaceRenderer, type CompareMode } from './FaceRenderer';
+import { FaceRenderer, type CompareMode, type RenderStyle, type ThumbnailRequest } from './FaceRenderer';
+import type { StageTheme } from './faceMaterial';
 import { loadFace } from './faceAssets';
-import { createThreeRenderer, glViewExtraProps, snapshotToDataUrl } from './glContext';
+import { createThreeRenderer, glViewExtraProps, readRenderTarget, toDataUrl } from './glContext';
 
 export interface FaceViewHandle {
   focus(focus: Partial<CameraFocus>): void;
   resetView(): void;
-  /** JPEG data URL of a clean frontal render, for look thumbnails. */
-  snapshot(): Promise<string | null>;
+  /** Offscreen render of the face with any values/camera; resolves to an image URI. */
+  renderThumbnail(req: ThumbnailRequest): Promise<string | null>;
+  /** JPEG data URL of a clean three-quarter render of `values`, for look thumbnails. */
+  snapshot(values: ControlValues): Promise<string | null>;
+  /** The camera angle currently on screen, as a focus request. */
+  currentFocus(): Partial<CameraFocus>;
+  /** Like renderThumbnail, but always resolves to a JPEG data URL (for uploads). */
+  renderDataUrl(req: ThumbnailRequest): Promise<string | null>;
 }
 
 export interface FaceViewProps {
@@ -26,14 +34,24 @@ export interface FaceViewProps {
   compareLabels?: [string, string];
   /** Distance from the top of the view to the compare labels (to clear overlays). */
   compareLabelsTop?: number;
+  /** Makes the "before" label a button (e.g. to pick what to compare against). */
+  onBeforeLabelPress?: () => void;
+  /** Vertical position of the split handle, 0 (top) to 1 (bottom). */
+  splitHandleY?: number;
   /** Framing margin: 1 = the face touches the edges; larger values zoom out. */
   fit?: number;
+  theme?: StageTheme;
+  renderStyle?: RenderStyle;
   mirrored?: boolean;
   interactive?: boolean;
-  turntable?: boolean;
+  /** true: gentle left-right sway. 'full': continuous rotation. */
+  turntable?: boolean | 'full';
   reveal?: boolean;
+  /** Hide the built-in loading indicator (when the screen shows its own). */
+  quietLoading?: boolean;
   style?: StyleProp<ViewStyle>;
   onReady?: () => void;
+  onInteract?: () => void;
   ref?: Ref<FaceViewHandle>;
 }
 
@@ -44,19 +62,24 @@ export function FaceView({
   values = EMPTY,
   compareValues = EMPTY,
   compareMode = 'off',
-  compareLabels = ['원본', '변경 후'],
+  compareLabels = ['Before', 'After'],
   compareLabelsTop = 14,
+  onBeforeLabelPress,
+  splitHandleY = 0.5,
   fit = 1.3,
+  theme = 'dark',
+  renderStyle = 'photo',
   mirrored = false,
   interactive = true,
   turntable = false,
   reveal = false,
+  quietLoading = false,
   style,
   onReady,
+  onInteract,
   ref,
 }: FaceViewProps) {
   const rendererRef = useRef<FaceRenderer | null>(null);
-  const glRef = useRef<ExpoWebGLRenderingContext | null>(null);
   const sizeRef = useRef({ width: 0, height: 0 });
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [loadedId, setLoadedId] = useState<string | null>(null);
@@ -67,10 +90,17 @@ export function FaceView({
   const splitStart = useRef(0.5);
 
   // Keep the latest props for the renderer, which may be created after they arrive.
-  const latest = useRef({ values, compareValues, compareMode, mirrored, turntable, reveal, split, fit });
-  latest.current = { values, compareValues, compareMode, mirrored, turntable, reveal, split, fit };
+  const props = { values, compareValues, compareMode, mirrored, turntable, reveal, split, fit, theme, renderStyle };
+  const latest = useRef(props);
+  latest.current = props;
 
   const faceId = face?.id ?? null;
+
+  const startMotion = (renderer: FaceRenderer) => {
+    const t = latest.current.turntable;
+    if (t === 'full') renderer.startTurntable(0, 0.08, true);
+    else if (t) renderer.startTurntable();
+  };
 
   const attachFace = (renderer: FaceRenderer) => {
     if (!face) return;
@@ -82,7 +112,7 @@ export function FaceView({
         renderer.setCompareValues(p.compareValues);
         renderer.setFace(loaded);
         if (p.reveal) renderer.playReveal();
-        if (p.turntable) renderer.startTurntable();
+        startMotion(renderer);
         setLoadedId(loaded.id);
         setError(null);
         onReady?.();
@@ -91,8 +121,10 @@ export function FaceView({
   };
 
   const onContextCreate = (gl: ExpoWebGLRenderingContext) => {
-    glRef.current = gl;
-    const renderer = new FaceRenderer(createThreeRenderer(gl, PixelRatio.get()), () => gl.endFrameEXP());
+    const renderer = new FaceRenderer(createThreeRenderer(gl, PixelRatio.get()), {
+      onFrameEnd: () => gl.endFrameEXP(),
+      readTarget: readRenderTarget,
+    });
     rendererRef.current = renderer;
     const { width, height } = sizeRef.current;
     if (width && height) renderer.setSize(width, height);
@@ -101,6 +133,8 @@ export function FaceView({
     renderer.setMirrored(p.mirrored);
     renderer.setSplit(p.split);
     renderer.setFit(p.fit);
+    renderer.setTheme(p.theme);
+    renderer.setRenderStyle(p.renderStyle);
     attachFace(renderer);
   };
 
@@ -116,11 +150,19 @@ export function FaceView({
   useEffect(() => rendererRef.current?.setMirrored(mirrored), [mirrored]);
   useEffect(() => rendererRef.current?.setSplit(split), [split]);
   useEffect(() => rendererRef.current?.setFit(fit), [fit]);
+  useEffect(() => rendererRef.current?.setTheme(theme), [theme]);
+  useEffect(() => rendererRef.current?.setRenderStyle(renderStyle), [renderStyle]);
+  // Start or stop the turntable when the prop changes (not on load, which would cancel
+  // a camera move requested from onReady).
+  const turning = useRef(turntable);
   useEffect(() => {
     const renderer = rendererRef.current;
-    if (!renderer || !loadedId) return;
-    if (turntable) renderer.startTurntable();
+    const was = turning.current;
+    turning.current = turntable;
+    if (!renderer || !loadedId || was === turntable) return;
+    if (turntable) startMotion(renderer);
     else renderer.stopAnimations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turntable, loadedId]);
 
   useEffect(
@@ -134,21 +176,17 @@ export function FaceView({
   useImperativeHandle(ref, () => ({
     focus: (f) => rendererRef.current?.focus(f),
     resetView: () => rendererRef.current?.resetView(),
-    snapshot: async () => {
+    currentFocus: () => rendererRef.current?.currentFocus() ?? { yaw: 0, pitch: 0, zoom: 1 },
+    renderDataUrl: async (req) => {
+      const uri = rendererRef.current ? await rendererRef.current.renderThumbnail(req) : null;
+      return uri ? toDataUrl(uri) : null;
+    },
+    renderThumbnail: async (req) => (rendererRef.current ? rendererRef.current.renderThumbnail(req) : null),
+    snapshot: async (v) => {
       const renderer = rendererRef.current;
-      const gl = glRef.current;
-      if (!renderer || !gl) return null;
-      const before = renderer.currentView;
-      const mode = latest.current.compareMode;
-      renderer.setCompareMode('off');
-      renderer.focus({ yaw: 18, pitch: 4, zoom: 1.05 }, 0);
-      renderer.renderNow();
-      try {
-        return await snapshotToDataUrl(gl);
-      } finally {
-        renderer.setCompareMode(mode);
-        renderer.setView(before);
-      }
+      if (!renderer) return null;
+      const uri = await renderer.renderThumbnail({ values: v, focus: { yaw: -22, pitch: 2, zoom: 1.12 }, width: 300, height: 360 });
+      return uri ? toDataUrl(uri) : null;
     },
   }));
 
@@ -159,6 +197,7 @@ export function FaceView({
     .onBegin(() => {
       lastPan.current = { x: 0, y: 0 };
       rendererRef.current?.beginDrag();
+      onInteract?.();
     })
     .onUpdate((e) => {
       rendererRef.current?.orbitBy(e.translationX - lastPan.current.x, e.translationY - lastPan.current.y);
@@ -171,6 +210,7 @@ export function FaceView({
     .enabled(interactive)
     .onBegin(() => {
       lastPinch.current = 1;
+      onInteract?.();
     })
     .onUpdate((e) => {
       rendererRef.current?.zoomBy(e.scale / lastPinch.current);
@@ -185,7 +225,7 @@ export function FaceView({
 
   const divider = Gesture.Pan()
     .runOnJS(true)
-    .hitSlop({ horizontal: 22 })
+    .hitSlop({ horizontal: 24 })
     .onBegin(() => {
       splitStart.current = latest.current.split;
     })
@@ -194,10 +234,33 @@ export function FaceView({
     });
 
   const loading = !!face && loadedId !== face.id && !error;
+  const labelTop = { top: compareLabelsTop };
+
+  const beforeLabel = (position: ViewStyle) =>
+    onBeforeLabelPress ? (
+      <Pressable
+        onPress={onBeforeLabelPress}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={`비교 대상: ${compareLabels[0]}`}
+        style={({ pressed }) => [styles.compareLabel, styles.compareLabelButton, labelTop, position, pressed && { opacity: 0.75 }]}
+      >
+        <Text style={styles.compareLabelText} numberOfLines={1}>
+          {compareLabels[0]}
+        </Text>
+        <Ionicons name="chevron-down" size={13} color="#FFFFFF" />
+      </Pressable>
+    ) : (
+      <View pointerEvents="none" style={[styles.compareLabel, labelTop, position]}>
+        <Text style={styles.compareLabelText} numberOfLines={1}>
+          {compareLabels[0]}
+        </Text>
+      </View>
+    );
 
   return (
     <View
-      style={[styles.container, style]}
+      style={[styles.container, theme === 'light' && styles.containerLight, style]}
       onLayout={(e) => {
         const { width, height } = e.nativeEvent.layout;
         sizeRef.current = { width, height };
@@ -213,44 +276,37 @@ export function FaceView({
 
       {compareMode === 'split' && size.width > 0 && (
         <>
-          <View pointerEvents="none" style={[styles.compareLabel, { left: 14, top: compareLabelsTop }]}>
-            <Text style={styles.compareLabelText}>{compareLabels[0]}</Text>
-          </View>
-          <View pointerEvents="none" style={[styles.compareLabel, { right: 14, top: compareLabelsTop }]}>
+          {beforeLabel({ left: 14 })}
+          <View pointerEvents="none" style={[styles.compareLabel, labelTop, { right: 14 }]}>
             <Text style={styles.compareLabelText}>{compareLabels[1]}</Text>
           </View>
+          <View pointerEvents="none" style={[styles.dividerLine, { left: split * size.width - 1 }]} />
           <GestureDetector gesture={divider}>
-            <View style={[styles.divider, { left: split * size.width - 22 }]}>
-              <View style={styles.dividerLine} />
-              <View style={styles.dividerKnob}>
-                <Text style={styles.dividerArrows}>‹ ›</Text>
-              </View>
+            <View style={[styles.dividerKnob, { left: split * size.width - 20, top: size.height * splitHandleY - 20 }]}>
+              <Ionicons name="code-outline" size={18} color={colors.ink} />
             </View>
           </GestureDetector>
         </>
       )}
 
-      {compareMode === 'sideBySide' && (
+      {compareMode === 'sideBySide' && size.width > 0 && (
         <>
-          <View pointerEvents="none" style={[styles.compareLabel, { left: 14, top: compareLabelsTop }]}>
-            <Text style={styles.compareLabelText}>{compareLabels[0]}</Text>
-          </View>
-          <View pointerEvents="none" style={[styles.compareLabel, { left: size.width / 2 + 14, top: compareLabelsTop }]}>
+          {beforeLabel({ left: 14 })}
+          <View pointerEvents="none" style={[styles.compareLabel, labelTop, { left: size.width / 2 + 14 }]}>
             <Text style={styles.compareLabelText}>{compareLabels[1]}</Text>
           </View>
           <View pointerEvents="none" style={[styles.sideDivider, { left: size.width / 2 - 0.5 }]} />
         </>
       )}
 
-      {(loading || !face) && (
+      {(loading || !face) && !quietLoading && (
         <View pointerEvents="none" style={styles.overlay}>
-          <ActivityIndicator color={colors.stageText} />
-          <Text style={styles.overlayText}>3D 얼굴을 불러오는 중</Text>
+          <ActivityIndicator color={theme === 'light' ? colors.ink : colors.stageText} />
         </View>
       )}
       {error && (
         <View pointerEvents="none" style={styles.overlay}>
-          <Text style={styles.overlayText}>{error}</Text>
+          <Text style={[styles.overlayText, theme === 'light' && { color: colors.muted }]}>{error}</Text>
         </View>
       )}
     </View>
@@ -259,39 +315,29 @@ export function FaceView({
 
 const styles = StyleSheet.create({
   container: { backgroundColor: colors.stage, overflow: 'hidden' },
-  overlay: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-  },
+  containerLight: { backgroundColor: '#E2E2E5' },
+  overlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: 10 },
   overlayText: { color: colors.stageMuted, fontSize: 13 },
   compareLabel: {
     position: 'absolute',
-    top: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    height: 28,
+    justifyContent: 'center',
     borderRadius: 999,
-    backgroundColor: 'rgba(20,16,18,0.55)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(90,90,94,0.62)',
   },
-  compareLabelText: { color: colors.stageText, fontSize: 12, fontWeight: '600', letterSpacing: 0.2 },
-  divider: { position: 'absolute', top: 0, bottom: 0, width: 44, alignItems: 'center', justifyContent: 'center' },
-  dividerLine: { position: 'absolute', top: 0, bottom: 0, width: 2, backgroundColor: 'rgba(255,255,255,0.85)' },
+  compareLabelButton: { flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '46%' },
+  compareLabelText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  dividerLine: { position: 'absolute', top: 0, bottom: 0, width: 2, backgroundColor: 'rgba(255,255,255,0.9)' },
   dividerKnob: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#fff',
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
+    boxShadow: '0px 2px 10px rgba(0,0,0,0.3)',
   },
-  dividerArrows: { color: colors.ink, fontSize: 16, fontWeight: '700', marginTop: -2 },
-  sideDivider: { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: 'rgba(255,255,255,0.25)' },
+  sideDivider: { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: 'rgba(255,255,255,0.3)' },
 });

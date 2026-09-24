@@ -66,6 +66,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
         <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/onboarding'))} hitSlop={10} style={styles.back}>
           <Ionicons name="chevron-back" size={26} color={colors.ink} />
         </Pressable>
+        <Text style={styles.brand}>BeautyMade</Text>
 
         <Text style={styles.title}>{signup ? '계정을 만들어주세요' : '다시 만나서 반가워요'}</Text>
         <Text style={styles.subtitle}>
@@ -111,7 +112,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
           {!!error && <Text style={styles.error}>{error}</Text>}
         </View>
 
-        <Button title={signup ? '가입하고 스캔 시작하기' : '로그인'} onPress={submit} loading={busy} testID="auth-submit" />
+        <Button title={signup ? '가입하고 내 얼굴 만들기' : '로그인'} onPress={submit} loading={busy} testID="auth-submit" />
 
         <Pressable onPress={() => router.replace(signup ? '/auth/login' : '/auth/signup')} style={styles.switch} hitSlop={8}>
           <Text style={styles.switchText}>
@@ -143,10 +144,10 @@ function Banner({
 }) {
   const warn = tone === 'warn';
   return (
-    <View style={[styles.banner, { backgroundColor: warn ? colors.warningSoft : colors.primarySoft }]}>
-      <Ionicons name={icon} size={18} color={warn ? colors.warning : colors.primaryInk} />
+    <View style={[styles.banner, { backgroundColor: warn ? colors.warningSoft : colors.surfaceAlt }]}>
+      <Ionicons name={icon} size={18} color={warn ? colors.warning : colors.ink} />
       <View style={styles.flex}>
-        <Text style={[styles.bannerText, { color: warn ? '#7A4D0F' : colors.primaryInk }]}>{text}</Text>
+        <Text style={[styles.bannerText, { color: warn ? '#6B4309' : colors.inkSoft }]}>{text}</Text>
         {action && (
           <Pressable onPress={action.onPress} hitSlop={6}>
             <Text style={styles.bannerAction}>{action.label} →</Text>
@@ -160,17 +161,18 @@ function Banner({
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: { paddingBottom: 32 },
-  back: { width: 40, height: 44, justifyContent: 'center', marginLeft: -8, marginBottom: 8 },
-  title: { fontSize: 28, lineHeight: 36, fontWeight: '800', letterSpacing: -0.8, color: colors.ink },
+  back: { width: 40, height: 44, justifyContent: 'center', marginLeft: -8, marginBottom: 12 },
+  brand: { fontSize: 15, fontWeight: '700', color: colors.muted, letterSpacing: -0.2, marginBottom: 6 },
+  title: { fontSize: 28, lineHeight: 36, fontWeight: '700', letterSpacing: -0.8, color: colors.ink },
   subtitle: { fontSize: 15, lineHeight: 22, color: colors.inkSoft, marginTop: 6 },
   form: { gap: 16, marginTop: 28, marginBottom: 24 },
   error: { color: colors.danger, fontSize: 13, fontWeight: '600' },
   switch: { alignItems: 'center', marginTop: 20 },
   switchText: { fontSize: 14, color: colors.inkSoft },
-  switchLink: { color: colors.primary, fontWeight: '700' },
+  switchLink: { color: colors.ink, fontWeight: '700', textDecorationLine: 'underline' },
   modeSwitch: { alignItems: 'center', marginTop: 28 },
   modeText: { fontSize: 13, color: colors.muted, textDecorationLine: 'underline' },
   banner: { flexDirection: 'row', gap: 10, padding: 14, borderRadius: radius.md, marginTop: 20, alignItems: 'flex-start' },
   bannerText: { fontSize: 13, lineHeight: 19, fontWeight: '500' },
-  bannerAction: { fontSize: 13, fontWeight: '800', color: '#7A4D0F', marginTop: 6 },
+  bannerAction: { fontSize: 13, fontWeight: '800', color: '#6B4309', marginTop: 6, textDecorationLine: 'underline' },
 });

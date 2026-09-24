@@ -2,6 +2,8 @@ import { Platform } from 'react-native';
 
 import {
   ApiError,
+  type AiRender,
+  type AiStatus,
   type ApiClient,
   type AuthResult,
   type CaptureView,
@@ -10,6 +12,7 @@ import {
   type Look,
   type LookPatch,
   type Me,
+  type NewAiRender,
   type NewLook,
   type Scan,
   type ScanPhoto,
@@ -143,6 +146,15 @@ export class RemoteApi implements ApiClient {
 
   deleteLook(id: string) {
     return this.request<void>('DELETE', `/looks/${id}`);
+  }
+
+  async aiStatus() {
+    return this.request<AiStatus>('GET', '/ai-renders/status');
+  }
+
+  async createAiRender(input: NewAiRender) {
+    const render = await this.request<AiRender>('POST', '/ai-renders', input);
+    return { ...render, url: this.url(render.url) };
   }
 
   private fixScan(scan: Scan): Scan {
