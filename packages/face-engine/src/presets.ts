@@ -12,6 +12,28 @@ export interface Preset {
 
 /** Three styles per category, from subtle to bold (shown as thumbnails in the studio). */
 export const PRESETS: readonly Preset[] = [
+  // eyes
+  {
+    id: 'eyes-natural',
+    name: '자연형',
+    tagline: '인아웃 6mm 자연스러운 쌍꺼풀',
+    category: 'eyes',
+    values: { creaseDepth: 0.55, creaseHeight: -0.5, aegyoSal: 0.3 },
+  },
+  {
+    id: 'eyes-bright',
+    name: '또렷형',
+    tagline: '쌍꺼풀에 눈매교정과 앞트임',
+    category: 'eyes',
+    values: { creaseDepth: 0.8, lidRaise: 0.6, innerCorner: 0.5 },
+  },
+  {
+    id: 'eyes-wide',
+    name: '시원형',
+    tagline: '아웃라인 쌍꺼풀과 앞·뒤·밑트임',
+    category: 'eyes',
+    values: { creaseDepth: 0.9, creaseHeight: 0.5, creaseShape: 0.8, lidRaise: 0.4, innerCorner: 0.6, outerCorner: 0.7, lowerLid: 0.6 },
+  },
   // nose
   {
     id: 'nose-natural',

@@ -41,6 +41,14 @@ class AiRenderError(Exception):
 
 # Wording for each control at +1 / -1 (None: the control only goes one way).
 _CHANGES: dict[str, tuple[str, str | None]] = {
+    "lidRaise": ("more open eyes: the upper eyelids sit higher and show more of the iris (ptosis correction)", None),
+    "innerCorner": ("inner eye corners opened towards the nose, showing some pink caruncle (epicanthoplasty)", None),
+    "outerCorner": ("outer eye corners extended outwards, so the eyes look longer (lateral canthoplasty)", None),
+    "lowerLid": ("the outer lower eyelids set slightly lower, so the eyes look bigger (lower-lid lowering)", None),
+    "aegyoSal": ("a soft, natural pretarsal roll (aegyo-sal) just under the lower lashes", None),
+    "underEye": ("filled, smoother under-eye hollows (tear troughs) with less shadow under the eyes", None),
+    "upperLid": ("fuller, less sunken upper eyelids", "slimmer, less puffy upper eyelids"),
+    "browLift": ("upper-eyelid skin lifted towards the brows, with less hooding over the outer eyelids", None),
     "noseBridge": ("a higher, more defined nose bridge", "a lower, softer nose bridge"),
     "noseTip": ("a more projected nose tip", "a less projected nose tip"),
     "noseTipRotation": ("a slightly upturned nose tip", "a slightly downturned nose tip"),
@@ -72,33 +80,81 @@ _ANGLES = {
 }
 
 
+# Millimetres at full strength, for the controls the app measures in mm (packages/face-engine controls.ts).
+_MM = {"lidRaise": 2.0, "innerCorner": 2.5, "outerCorner": 3.0, "lowerLid": 2.0}
+# Double-eyelid crease height above the lashes at creaseHeight -1 / 0 / +1, in mm.
+_CREASE_MM = (5.0, 7.0, 9.0)
+_CREASE_LINES = {
+    "in": "an in-line crease, tucked into the inner corner of the eye",
+    "in-out": "an in-out line: starting inside the inner corner and widening towards the outer corner",
+    "out": "an out-line crease, running parallel to the lashes from the inner corner",
+}
+
+# Controls that reshape the skin around the eyes. The eyes themselves and the brows stay as photographed.
+_EYE_AREA = ("aegyoSal", "underEye", "upperLid", "browLift")
+# Controls that change the eyes themselves: the eyelid crease and the shape of the eye opening.
+_EYE_SHAPE = ("creaseDepth", *_MM)
+
+
+def _value(values: dict[str, float], control: str) -> float:
+    return float(values.get(control, 0) or 0)
+
+
+def _active(values: dict[str, float], control: str) -> bool:
+    return abs(_value(values, control)) >= 0.05
+
+
+def _strength(v: float) -> str:
+    return "very subtly" if abs(v) < 0.3 else "moderately" if abs(v) < 0.7 else "clearly"
+
+
+def _crease(values: dict[str, float]) -> str:
+    height, shape = _value(values, "creaseHeight"), _value(values, "creaseShape")
+    low, mid, high = _CREASE_MM
+    mm = mid + height * (mid - low if height < 0 else high - mid)
+    line = _CREASE_LINES["in" if shape <= -1 / 3 else "out" if shape >= 1 / 3 else "in-out"]
+    depth = _value(values, "creaseDepth")
+    look = "a soft, natural" if depth < 0.45 else "a defined" if depth < 0.8 else "a crisp, deep"
+    return f"{look} double-eyelid crease about {mm:.0f} mm above the upper lashes, as {line}"
+
+
 def describe_changes(values: dict[str, float]) -> list[str]:
-    lines = []
+    lines = [_crease(values)] if _active(values, "creaseDepth") else []
     for control, (positive, negative) in _CHANGES.items():
-        v = float(values.get(control, 0) or 0)
-        if abs(v) < 0.05:
+        v = _value(values, control)
+        if not _active(values, control):
             continue
         phrase = positive if v > 0 else negative
         if phrase is None:
             continue
-        strength = "very subtly" if abs(v) < 0.3 else "moderately" if abs(v) < 0.7 else "clearly"
-        lines.append(f"{strength} {phrase}")
+        if control in _MM:
+            phrase += f", about {abs(v) * _MM[control]:.1f} mm"
+        lines.append(f"{_strength(v)} {phrase}")
     return lines
 
 
 def build_prompt(values: dict[str, float], angle: str) -> str:
     changes = describe_changes(values)
     change_text = "\n".join(f"- {c}" for c in changes) if changes else "- none: show the person exactly as they are"
+    if any(_active(values, c) for c in _EYE_SHAPE):
+        keep = "iris colour, eyelashes, eyebrow shape and hair"
+        shaped = "the nose, jawline, chin, cheeks, lips, forehead, the eye shape, eyelids and the skin around the eyes"
+    elif any(_active(values, c) for c in _EYE_AREA):
+        keep = "the eyes themselves (eye shape, iris colour, eyelashes), eyebrow shape and hair"
+        shaped = "the nose, jawline, chin, cheeks, lips, forehead and the skin around the eyes"
+    else:
+        keep = "eyes, eyebrows"
+        shaped = "the nose, jawline, chin, cheeks, lips and forehead"
     return f"""You are a professional portrait photographer and retoucher creating a realistic before/after preview.
 
 Image 1 is a real photo of a person. Image 2 is a 3D preview of the SAME person's head after a planned change, \
 seen from the wanted camera angle. The 3D preview has simplified hair and ears.
 
 Create ONE photorealistic portrait photo of the person in Image 1:
-- Identity: keep them unmistakably the same person - face, age, skin tone and texture, eyes, eyebrows, \
+- Identity: keep them unmistakably the same person - face, age, skin tone and texture, {keep}, \
 hairstyle and hair colour exactly as in Image 1.
 - Pose: head {_ANGLES.get(angle, _ANGLES["custom"])}; head and shoulders, face centred, neutral relaxed expression.
-- Face shape: follow Image 2 for the nose, jawline, chin, cheeks, lips and forehead.
+- Face shape: follow Image 2 for {shaped}.
 - Planned changes (apply exactly these, natural and believable; change nothing else):
 {change_text}
 - No makeup, filters or beautification beyond the planned changes. No text or watermarks.

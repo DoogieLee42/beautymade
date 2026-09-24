@@ -24,27 +24,39 @@ export function loadFace(face: FaceModel): Promise<LoadedFace> {
 }
 
 async function build(face: FaceModel): Promise<LoadedFace> {
+  const eyeball = face.textures.eyes && face.eyeTexture ? face.textures.eyes : null;
   const texturesPromise = Promise.all([
     loadTexture(face.textures.albedo),
     loadTexture(face.textures.smooth),
     loadTexture(face.textures.mask),
+    // Without the eyeball the eye openings fall back to the face texture.
+    eyeball ? loadTexture(eyeball).catch(() => null) : Promise.resolve(null),
   ]);
   // Let the texture requests start before the (synchronous) geometry work.
   await new Promise((r) => setTimeout(r, 0));
   const mesh = buildFaceMesh(face.mesh, { subdivisions: 2 });
-  const model = new DeformationModel(mesh);
+  const model = new DeformationModel(mesh, undefined, outerEyeMm(face));
   const coarse = buildFaceMesh(face.mesh, { subdivisions: 1 });
   const wire = { positions: coarse.positions, edges: meshEdges(coarse.indices, coarse.vertexCount) };
-  const [albedo, smooth, mask] = await texturesPromise;
+  const [albedo, smooth, mask, eyes] = await texturesPromise;
   return {
     id: face.id,
     mesh,
     wire,
     model,
-    textures: { albedo, smooth, mask },
+    lid: model.lidCoordinates(),
+    textures: { albedo, smooth, mask, eyes },
+    eyeMaps: eyes && face.eyeTexture ? { right: face.eyeTexture.right, left: face.eyeTexture.left } : null,
     skinTone: face.skinTone,
     lit: !!face.isDemo,
   };
+}
+
+/** The measured distance between the outer eye corners, so eye edits move by real millimetres. */
+function outerEyeMm(face: FaceModel): number | undefined {
+  const eyes = face.eyes;
+  if (!eyes) return undefined;
+  return eyes.outerCanthalMm ?? eyes.intercanthalMm + eyes.right.widthMm + eyes.left.widthMm;
 }
 
 export function forgetFace(faceId: string): void {

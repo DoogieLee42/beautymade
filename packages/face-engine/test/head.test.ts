@@ -20,7 +20,7 @@ describe('full-head mesh', () => {
     expect(mesh.hasHead).toBe(true);
     expect(mesh.landmarkCount).toBe(468);
     for (let i = 0; i < 468 * 3; i++) expect(mesh.positions[i]).toBeCloseTo(base.positions[i], 5);
-    const faceVertices = 7257; // the face-only mesh at two subdivision levels
+    const faceVertices = 7257 + 2 * 64; // the face-only mesh at two subdivision levels, with its eye-opening copies
     expect(mesh.vertexCount).toBe(faceVertices + shellCount + 36 * 4);
     expect(Math.max(...mesh.indices)).toBe(mesh.vertexCount - 1);
   });
@@ -87,8 +87,30 @@ describe('full-head mesh', () => {
     expect(backMoved).toBe(0);
   });
 
+  it('keeps eye edits on the face', () => {
+    const model = new DeformationModel(mesh);
+    const out = model.apply({
+      aegyoSal: 1,
+      underEye: 1,
+      upperLid: 1,
+      browLift: 1,
+      lidRaise: 1,
+      innerCorner: 1,
+      outerCorner: 1,
+      lowerLid: 1,
+    });
+    const lid = model.lidCoordinates();
+    for (let i = 468; i < mesh.vertexCount; i++) {
+      if (mesh.positions[i * 3 + 2] > -2) continue;
+      const d = Math.hypot(out[i * 3] - mesh.positions[i * 3], out[i * 3 + 1] - mesh.positions[i * 3 + 1], out[i * 3 + 2] - mesh.positions[i * 3 + 2]);
+      expect(d, `head vertex ${i}`).toBeLessThan(1e-6);
+      // No double-eyelid crease on the back of the head either.
+      expect(lid[i * 2 + 1], `head vertex ${i}`).toBe(-99);
+    }
+  });
+
   it('can be built coarser for the scanning wireframe', () => {
     const coarse = buildFaceMesh(base, { subdivisions: 1 });
-    expect(coarse.vertexCount).toBe(1833 + shellCount + 36 * 2);
+    expect(coarse.vertexCount).toBe(1833 + 2 * 32 + shellCount + 36 * 2);
   });
 });

@@ -2,6 +2,7 @@ import { CONTROL_BY_ID, type CameraFocus, type CategoryId } from '@beautymade/fa
 
 /** Camera used for a category's preset thumbnails: close on the feature, turned to show its profile. */
 export const PRESET_VIEW: Record<CategoryId, Partial<CameraFocus>> = {
+  eyes: { ...CONTROL_BY_ID.creaseDepth.focus, yaw: 16, pitch: 0, zoom: 2.2 },
   nose: { ...CONTROL_BY_ID.noseTip.focus, yaw: 58, pitch: 2, zoom: 2.3 },
   contour: { ...CONTROL_BY_ID.chinLength.focus, yaw: 38, pitch: 4, zoom: 1.45 },
   lips: { ...CONTROL_BY_ID.lipVolume.focus, yaw: 24, pitch: 0, zoom: 2.5 },

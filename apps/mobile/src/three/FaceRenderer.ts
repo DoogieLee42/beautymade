@@ -1,5 +1,7 @@
 import {
   computeVertexNormals,
+  creaseHeightMm,
+  isShapeControlId,
   type CameraFocus,
   type ControlValues,
   type DeformationModel,
@@ -7,6 +9,7 @@ import {
 } from '@beautymade/face-engine';
 import * as THREE from 'three';
 
+import type { EyeMap } from '../api/types';
 import {
   STAGE_COLORS,
   createBackgroundMaterial,
@@ -21,7 +24,11 @@ export interface LoadedFace {
   mesh: FaceMesh;
   wire: WireMesh;
   model: DeformationModel;
+  /** Upper-eyelid coordinates per vertex, for the double-eyelid crease (see DeformationModel.lidCoordinates). */
+  lid: Float32Array;
   textures: FaceMaterialTextures;
+  /** How the eye openings find their place in `textures.eyes`, when the face has an eyeball texture. */
+  eyeMaps: { right: EyeMap; left: EyeMap } | null;
   skinTone: number[];
   /** True when the albedo has no baked lighting (the sample face): render with studio lights. */
   lit: boolean;
@@ -191,8 +198,11 @@ export class FaceRenderer {
     geometry.setAttribute('normal0', new THREE.BufferAttribute(mesh.normals, 3));
     geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.uvs, 2));
     geometry.setAttribute('edgeFade', new THREE.BufferAttribute(mesh.edgeFade, 1));
+    geometry.setAttribute('eye', new THREE.BufferAttribute(mesh.eye, 1));
+    geometry.setAttribute('eyeShade', new THREE.BufferAttribute(mesh.eyeShade, 1));
+    geometry.setAttribute('lid', new THREE.BufferAttribute(face.lid, 2));
     geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-    const material = createFaceMaterial(face.textures, face.skinTone, face.lit);
+    const material = createFaceMaterial(face.textures, face.skinTone, face.lit, face.eyeMaps);
     const object = new THREE.Mesh(geometry, material);
     object.frustumCulled = false;
     object.visible = false;
@@ -230,6 +240,9 @@ export class FaceRenderer {
     u.uTone.value = values.skinTone ?? 0;
     u.uRedness.value = values.skinRedness ?? 0;
     u.uGlow.value = values.skinGlow ?? 0;
+    u.uCrease.value = values.creaseDepth ?? 0;
+    u.uCreaseHeight.value = creaseHeightMm(values.creaseHeight ?? 0);
+    u.uCreaseShape.value = values.creaseShape ?? 0;
     this.invalidate();
   }
 
@@ -665,10 +678,11 @@ export class FaceRenderer {
   }
 }
 
+/** Whether the geometry must be recomputed (skin and crease controls only change shader uniforms). */
 function shapeKeysDiffer(a: ControlValues, b: ControlValues): boolean {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof ControlValues>;
   for (const k of keys) {
-    if (k.startsWith('skin')) continue;
+    if (!isShapeControlId(k)) continue;
     if ((a[k] ?? 0) !== (b[k] ?? 0)) return true;
   }
   return false;

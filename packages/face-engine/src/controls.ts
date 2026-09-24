@@ -1,9 +1,17 @@
-import { bump, combine, lips, type FieldFn } from './fields';
-import { REGION } from './topology/landmarks';
+import { bump, canthus, combine, lidBand, lidMargin, lips, type FieldFn } from './fields';
+import { LM, REGION } from './topology/landmarks';
 
-export type CategoryId = 'nose' | 'contour' | 'lips' | 'skin' | 'lifting';
+export type CategoryId = 'eyes' | 'nose' | 'contour' | 'lips' | 'skin' | 'lifting';
 
 export type ShapeControlId =
+  | 'lidRaise'
+  | 'innerCorner'
+  | 'outerCorner'
+  | 'lowerLid'
+  | 'aegyoSal'
+  | 'underEye'
+  | 'upperLid'
+  | 'browLift'
   | 'noseBridge'
   | 'noseTip'
   | 'noseTipRotation'
@@ -24,7 +32,10 @@ export type ShapeControlId =
 
 export type SkinControlId = 'skinSmooth' | 'skinTone' | 'skinRedness' | 'skinGlow';
 
-export type ControlId = ShapeControlId | SkinControlId;
+/** Double-eyelid crease, drawn by the face shader rather than moved geometry. */
+export type LidControlId = 'creaseDepth' | 'creaseHeight' | 'creaseShape';
+
+export type ControlId = ShapeControlId | SkinControlId | LidControlId;
 
 /** Where the studio camera should look while a control is being adjusted. */
 export interface CameraFocus {
@@ -51,6 +62,10 @@ interface ControlBase {
   minLabel: string;
   maxLabel: string;
   focus: CameraFocus;
+  /** Sub-heading the control is listed under within its category. */
+  group?: string;
+  /** Slider readout in real units ("2.5mm", "인아웃"); the plain value when absent. */
+  readout?(value: number): string;
 }
 
 export interface ShapeControl extends ControlBase {
@@ -65,22 +80,31 @@ export interface SkinControl extends ControlBase {
   id: SkinControlId;
 }
 
-export type Control = ShapeControl | SkinControl;
+export interface LidControl extends ControlBase {
+  kind: 'lid';
+  id: LidControlId;
+}
+
+export type Control = ShapeControl | SkinControl | LidControl;
 
 export interface Category {
   id: CategoryId;
   label: string;
+  /** Tab label when space is tight (defaults to `label`). */
+  short?: string;
   description: string;
 }
 
 export const CATEGORIES: readonly Category[] = [
+  { id: 'eyes', label: '눈', description: '쌍꺼풀, 트임, 눈매교정, 눈가 볼륨' },
   { id: 'nose', label: '코', description: '콧대, 코끝, 콧볼' },
-  { id: 'contour', label: '턱/윤곽', description: '턱선, 턱끝, 광대, 이마' },
+  { id: 'contour', label: '턱/윤곽', short: '윤곽', description: '턱선, 턱끝, 광대, 이마' },
   { id: 'lips', label: '입술', description: '볼륨, 입꼬리, 너비' },
   { id: 'skin', label: '피부', description: '피부결, 톤, 홍조, 윤광' },
   { id: 'lifting', label: '리프팅', description: '처짐, 앞볼, 팔자' },
 ];
 
+const EYES: readonly number[] = [LM.eyeOuterLeft, LM.eyeInnerLeft, LM.eyeInnerRight, LM.eyeOuterRight];
 const FACE: readonly number[] = [168, 1, 152];
 const NOSE: readonly number[] = [6, 1];
 const MOUTH: readonly number[] = [13, 14];
@@ -94,7 +118,217 @@ const focus = (yaw: number, zoom: number, target: readonly number[], pitch = 0):
   target,
 });
 
+/** Double-eyelid crease height above the lashes, in mm, at slider values -1 / 0 / +1. */
+export const CREASE_MM = { min: 5, mid: 7, max: 9 } as const;
+
+export function creaseHeightMm(value: number): number {
+  const step = value < 0 ? CREASE_MM.mid - CREASE_MM.min : CREASE_MM.max - CREASE_MM.mid;
+  return CREASE_MM.mid + value * step;
+}
+
+/** Crease line type: in-line (-1, tucked into the inner corner), in-out (0), out-line (+1, parallel). */
+export function creaseLine(value: number): string {
+  return value <= -1 / 3 ? '인라인' : value >= 1 / 3 ? '아웃라인' : '인아웃';
+}
+
+// How far each eye-opening procedure moves at full strength, in mm.
+const LID_RAISE_MM = 2;
+const INNER_CORNER_MM = 2.5;
+const OUTER_CORNER_MM = 3;
+const LOWER_LID_MM = 2;
+const mmReadout = (fullMm: number) => (v: number) => `${(v * fullMm).toFixed(1)}mm`;
+
 export const CONTROLS: readonly Control[] = [
+  // ---------------------------------------------------------------- eyes
+  // Double eyelid: drawn by the face shader along the upper lid (see creaseHeightMm, creaseLine).
+  {
+    kind: 'lid',
+    id: 'creaseDepth',
+    category: 'eyes',
+    group: '쌍꺼풀',
+    label: '쌍꺼풀',
+    short: '쌍꺼풀',
+    hint: '속눈썹 위에 쌍꺼풀 라인을 만들어요',
+    min: 0,
+    max: 1,
+    minLabel: '없음',
+    maxLabel: '선명',
+    focus: focus(0, 1.45, EYES),
+  },
+  {
+    kind: 'lid',
+    id: 'creaseHeight',
+    category: 'eyes',
+    group: '쌍꺼풀',
+    label: '쌍꺼풀 높이',
+    short: '높이',
+    hint: '속눈썹에서 쌍꺼풀 라인까지의 높이',
+    min: -1,
+    max: 1,
+    minLabel: `${CREASE_MM.min}mm`,
+    maxLabel: `${CREASE_MM.max}mm`,
+    focus: focus(0, 1.45, EYES),
+    readout: (v) => `${creaseHeightMm(v).toFixed(1)}mm`,
+  },
+  {
+    kind: 'lid',
+    id: 'creaseShape',
+    category: 'eyes',
+    group: '쌍꺼풀',
+    label: '쌍꺼풀 라인',
+    short: '라인',
+    hint: '인라인 · 인아웃라인 · 아웃라인',
+    min: -1,
+    max: 1,
+    minLabel: '인라인',
+    maxLabel: '아웃라인',
+    focus: focus(0, 1.45, EYES),
+    readout: creaseLine,
+  },
+  // The eye opening: lid margins and corners move, the eyeball behind them stays.
+  {
+    kind: 'shape',
+    id: 'lidRaise',
+    category: 'eyes',
+    group: '트임 · 눈매교정',
+    label: '눈매교정',
+    short: '눈매교정',
+    hint: '처진 윗눈꺼풀을 올려 눈동자가 더 보이게',
+    min: 0,
+    max: 1,
+    minLabel: '원래대로',
+    maxLabel: `+${LID_RAISE_MM}mm`,
+    focus: focus(0, 1.45, EYES),
+    readout: (v) => `+${(v * LID_RAISE_MM).toFixed(1)}mm`,
+    field: lidMargin({
+      moving: REGION.upperLidLeft,
+      opposite: REGION.lowerLidLeft,
+      peak: 0.45,
+      spread: 0.52,
+      reach: 9,
+      move: [0, LID_RAISE_MM, 0.2],
+    }),
+  },
+  {
+    kind: 'shape',
+    id: 'innerCorner',
+    category: 'eyes',
+    group: '트임 · 눈매교정',
+    label: '앞트임',
+    short: '앞트임',
+    hint: '눈 앞머리를 코 쪽으로 열어 눈물언덕이 보이게',
+    min: 0,
+    max: 1,
+    minLabel: '원래대로',
+    maxLabel: `${INNER_CORNER_MM}mm`,
+    focus: focus(0, 1.55, EYES),
+    readout: mmReadout(INNER_CORNER_MM),
+    field: canthus({ at: LM.eyeInnerLeft, radius: [6.5, 5.5, 9], move: [INNER_CORNER_MM, -0.3, 0] }),
+  },
+  {
+    kind: 'shape',
+    id: 'outerCorner',
+    category: 'eyes',
+    group: '트임 · 눈매교정',
+    label: '뒷트임',
+    short: '뒷트임',
+    hint: '눈꼬리를 바깥으로 늘려 가로로 길게',
+    min: 0,
+    max: 1,
+    minLabel: '원래대로',
+    maxLabel: `${OUTER_CORNER_MM}mm`,
+    focus: focus(16, 1.45, EYES),
+    readout: mmReadout(OUTER_CORNER_MM),
+    field: canthus({ at: LM.eyeOuterLeft, radius: [7, 5.5, 10], move: [-OUTER_CORNER_MM, -0.6, -0.8] }),
+  },
+  {
+    kind: 'shape',
+    id: 'lowerLid',
+    category: 'eyes',
+    group: '트임 · 눈매교정',
+    label: '밑트임',
+    short: '밑트임',
+    hint: '아래 눈꺼풀 바깥쪽을 내려 눈이 세로로 커 보이게',
+    min: 0,
+    max: 1,
+    minLabel: '원래대로',
+    maxLabel: `${LOWER_LID_MM}mm`,
+    focus: focus(8, 1.45, EYES),
+    readout: mmReadout(LOWER_LID_MM),
+    field: lidMargin({
+      moving: REGION.lowerLidLeft,
+      opposite: REGION.upperLidLeft,
+      peak: 0.72,
+      spread: 0.55,
+      reach: 8,
+      move: [0, -LOWER_LID_MM, 0],
+    }),
+  },
+  // The skin around the eyes.
+  {
+    kind: 'shape',
+    id: 'aegyoSal',
+    category: 'eyes',
+    group: '눈가 볼륨',
+    label: '애교살',
+    short: '애교살',
+    hint: '아래 속눈썹 밑에 도톰한 애교살을 만들어요',
+    min: 0,
+    max: 1,
+    minLabel: '원래대로',
+    maxLabel: '도톰',
+    focus: focus(24, 1.45, EYES),
+    // A roll about 1-6 mm under the lower lashes, fullest under the pupil.
+    field: lidBand({ lid: REGION.lowerLidLeft, offset: -3.2, halfHeight: 2.7, peak: 0.52, spread: 0.62, move: [0, 0.3, 1.8] }),
+  },
+  {
+    kind: 'shape',
+    id: 'underEye',
+    category: 'eyes',
+    group: '눈가 볼륨',
+    label: '눈밑 꺼짐',
+    short: '눈밑',
+    hint: '꺼진 눈 밑을 채워 그늘 없이 매끈하게',
+    min: 0,
+    max: 1,
+    minLabel: '원래대로',
+    maxLabel: '매끈',
+    focus: focus(30, 1.5, EYES),
+    // The hollow 3-13 mm under the lid, deepest towards the nose (tear trough).
+    field: lidBand({ lid: REGION.lowerLidLeft, offset: -8, halfHeight: 5, peak: 0.42, spread: 0.85, move: [0, 0.2, 1.6] }),
+  },
+  {
+    kind: 'shape',
+    id: 'upperLid',
+    category: 'eyes',
+    group: '눈가 볼륨',
+    label: '눈두덩 볼륨',
+    short: '눈두덩',
+    hint: '꺼진 눈두덩은 채우고, 부은 눈두덩은 얇게',
+    min: -1,
+    max: 1,
+    minLabel: '얇게',
+    maxLabel: '볼륨',
+    focus: focus(45, 1.5, EYES),
+    // The hollow between the upper lid and the brow bone, 2-12 mm above the lashes.
+    field: lidBand({ lid: REGION.upperLidLeft, offset: 6.5, halfHeight: 5, peak: 0.45, spread: 0.8, move: [0, -0.35, 2] }),
+  },
+  {
+    kind: 'shape',
+    id: 'browLift',
+    category: 'eyes',
+    group: '눈가 볼륨',
+    label: '눈썹 거상',
+    short: '눈썹거상',
+    hint: '눈썹 밑 처진 눈꺼풀 피부를 끌어올려요',
+    min: 0,
+    max: 1,
+    minLabel: '원래대로',
+    maxLabel: '올림',
+    focus: focus(0, 1.5, EYES),
+    // Lifts the skin that hoods the outer half of the lid; the lashes and the brow stay put.
+    field: bump({ at: REGION.lidHoodLeft, offset: [0, 0.02, 0], radius: [0.13, 0.075, 0.2], move: [-0.004, 0.028, 0], mirror: true }),
+  },
   // ---------------------------------------------------------------- nose
   {
     kind: 'shape',
@@ -406,6 +640,12 @@ export const CONTROL_BY_ID: Readonly<Record<ControlId, Control>> = Object.fromEn
 export const SHAPE_CONTROLS: readonly ShapeControl[] = CONTROLS.filter((c): c is ShapeControl => c.kind === 'shape');
 
 export const SKIN_CONTROLS: readonly SkinControl[] = CONTROLS.filter((c): c is SkinControl => c.kind === 'skin');
+
+export const LID_CONTROLS: readonly LidControl[] = CONTROLS.filter((c): c is LidControl => c.kind === 'lid');
+
+export function isShapeControlId(id: string): id is ShapeControlId {
+  return CONTROL_BY_ID[id as ControlId]?.kind === 'shape';
+}
 
 export function controlsInCategory(category: CategoryId): Control[] {
   return CONTROLS.filter((c) => c.category === category);

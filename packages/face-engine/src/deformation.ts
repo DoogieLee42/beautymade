@@ -1,5 +1,5 @@
 import { SHAPE_CONTROLS, type ShapeControl, type ShapeControlId } from './controls';
-import { createFieldContext, type DisplacementField } from './fields';
+import { createFieldContext, upperLidCoordinates, type DisplacementField, type FieldContext } from './fields';
 import { computeFaceFrame, toLocalPositions, type FaceFrame } from './frame';
 import { centroid, type Vec3 } from './math';
 import type { FaceMesh } from './mesh';
@@ -21,12 +21,18 @@ export class DeformationModel {
   readonly mesh: FaceMesh;
   readonly frame: FaceFrame;
   private readonly fields = new Map<ShapeControlId, SparseField>();
+  private readonly ctx: FieldContext;
 
-  constructor(mesh: FaceMesh, controls: readonly ShapeControl[] = SHAPE_CONTROLS) {
+  /**
+   * `outerEyeMm`: the face's outer-eye-corner distance in millimetres, when measured (see the
+   * face model's eye measurements), so eye edits move by real millimetres.
+   */
+  constructor(mesh: FaceMesh, controls: readonly ShapeControl[] = SHAPE_CONTROLS, outerEyeMm?: number) {
     this.mesh = mesh;
     this.frame = computeFaceFrame(mesh.positions, mesh.landmarkCount);
     const local = toLocalPositions(this.frame, mesh.positions);
-    const ctx = createFieldContext(local, mesh.landmarkCount);
+    const ctx = createFieldContext(local, mesh.landmarkCount, outerEyeMm);
+    this.ctx = ctx;
     for (const control of controls) {
       this.fields.set(control.id, this.toSparse(control.field(ctx)));
     }
@@ -52,6 +58,11 @@ export class DeformationModel {
       }
     }
     return out;
+  }
+
+  /** Upper-eyelid coordinates of every rest vertex (see {@link upperLidCoordinates}), n x 2. */
+  lidCoordinates(): Float32Array {
+    return upperLidCoordinates(this.ctx);
   }
 
   /** Number of vertices a control moves. */

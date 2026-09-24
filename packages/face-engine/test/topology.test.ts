@@ -78,7 +78,8 @@ describe('buildFaceMesh', () => {
 
   it('subdivides while keeping landmarks in place', () => {
     const mesh = buildFaceMesh(base, { subdivisions: 2 });
-    expect(mesh.vertexCount).toBe(7257);
+    // 7257 subdivided vertices plus copies of the two lid-margin loops (16 edges x 4 each).
+    expect(mesh.vertexCount).toBe(7257 + 2 * 64);
     expect(mesh.indices.length / 3).toBe(898 * 16);
     expect(mesh.indices).toBeInstanceOf(Uint16Array);
     for (let i = 0; i < CANONICAL_VERTEX_COUNT * 3; i++) {

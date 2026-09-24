@@ -7,6 +7,7 @@ import {
   PRESET_BY_ID,
   applyPreset,
   describeLook,
+  formatControlValue,
   formatDecimal,
   formatValue,
   interpolateValues,
@@ -77,18 +78,37 @@ describe('look values', () => {
     expect(describeLook({})).toBe('변경 없음');
   });
 
+  it('reads eye controls out in millimetres and line types', () => {
+    expect(formatControlValue('innerCorner', 0.6)).toBe('1.5mm');
+    expect(formatControlValue('lidRaise', 0.5)).toBe('+1.0mm');
+    expect(formatControlValue('creaseHeight', 0)).toBe('7.0mm');
+    expect(formatControlValue('creaseHeight', -1)).toBe('5.0mm');
+    expect(formatControlValue('creaseHeight', 0.5)).toBe('8.0mm');
+    expect(formatControlValue('creaseShape', -0.8)).toBe('인라인');
+    expect(formatControlValue('creaseShape', 0.1)).toBe('인아웃');
+    expect(formatControlValue('creaseShape', 0.9)).toBe('아웃라인');
+    expect(formatControlValue('noseTip', 0.24)).toBe('0.2');
+    // The crease's height and line type are reported with it, not on their own.
+    expect(describeLook({ creaseDepth: 0.8, creaseHeight: -0.5, creaseShape: 1, innerCorner: 0.4 })).toBe(
+      '쌍꺼풀 아웃라인 6.0mm · 앞트임 1.0mm',
+    );
+    expect(describeLook({ creaseHeight: 0.5 })).toBe('변경 없음');
+  });
+
   it('formats slider decimals and lists touched categories', () => {
     expect(formatDecimal(0.24)).toBe('0.2');
     expect(formatDecimal(-0.1)).toBe('-0.1');
     expect(formatDecimal(0.01)).toBe('0');
     expect(lookCategories({ lift: 0.5, noseTip: 0.2, skinGlow: 0 })).toEqual(['nose', 'lifting']);
     expect(lookCategories({ chinLength: 0.3 })).toEqual(['contour']);
+    expect(lookCategories({ noseTip: 0.2, aegyoSal: 0.4 })).toEqual(['eyes', 'nose']);
   });
 
   it('suggests a name from presets or dominant changes', () => {
     expect(suggestLookName(PRESET_BY_ID['skin-glass'].values)).toBe('물광 피부');
     expect(suggestLookName(PRESET_BY_ID['contour-vline'].values)).toBe('갸름형 윤곽');
     expect(suggestLookName(PRESET_BY_ID['nose-natural'].values)).toBe('자연형 코');
+    expect(suggestLookName(PRESET_BY_ID['eyes-natural'].values)).toBe('자연형 눈');
     expect(suggestLookName({ jawline: 0.3, noseTip: 0.5 })).toBe('코끝 높이 + 턱선');
     expect(suggestLookName({})).toBe('원본');
   });

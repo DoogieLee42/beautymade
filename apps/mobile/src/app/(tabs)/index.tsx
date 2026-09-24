@@ -19,7 +19,9 @@ import { useFaceThumbnails } from '../../three/thumbnails';
 import { PRESET_VIEW } from '../../three/views';
 
 /** One eye-catching style per category for the quick start row. */
-const QUICK = ['nose-defined', 'contour-vline', 'lips-full', 'skin-glass', 'lifting-firm'].map((id) => PRESET_BY_ID[id]);
+const QUICK = ['eyes-bright', 'nose-defined', 'contour-vline', 'lips-full', 'skin-glass', 'lifting-firm'].map(
+  (id) => PRESET_BY_ID[id],
+);
 
 const TILE = 132;
 

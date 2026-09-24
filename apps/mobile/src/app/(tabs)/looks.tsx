@@ -18,6 +18,7 @@ type Filter = 'all' | CategoryId;
 
 const FILTERS: { value: Filter; label: string }[] = [
   { value: 'all', label: '전체' },
+  { value: 'eyes', label: '눈' },
   { value: 'nose', label: '코' },
   { value: 'contour', label: '윤곽' },
   { value: 'lips', label: '입술' },

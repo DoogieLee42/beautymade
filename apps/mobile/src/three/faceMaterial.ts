@@ -13,10 +13,18 @@ THREE.ColorManagement.enabled = false;
  * exactly like the photos, while a higher nose bridge or slimmer jaw catches light
  * and shadow as it would in reality. Skin controls (smoothing, tone-up, redness,
  * glow) are masked to skin so eyes, brows and lips stay crisp.
+ *
+ * Eyes: the eye openings are drawn from a separate eyeball texture, looked up by where
+ * the surface is now in a frame fixed to the eyeball. Opening a lid (눈매교정, 트임) therefore
+ * reveals eyeball that the lid used to cover instead of stretching the iris. A double-eyelid
+ * crease is drawn along the upper lids from per-vertex lid coordinates (mm above the lashes).
  */
 const vertexShader = /* glsl */ `
   attribute vec3 normal0;
   attribute float edgeFade;
+  attribute float eye;
+  attribute float eyeShade;
+  attribute vec2 lid;
 
   varying vec2 vUv;
   varying vec3 vNormalObj;
@@ -25,9 +33,15 @@ const vertexShader = /* glsl */ `
   varying vec3 vViewPos;
   varying vec3 vObjPos;
   varying float vFade;
+  varying float vEye;
+  varying float vEyeShade;
+  varying vec2 vLid;
 
   void main() {
     vUv = uv;
+    vEye = eye;
+    vEyeShade = eyeShade;
+    vLid = lid;
     vNormalObj = normal;
     vNormal0Obj = normal0;
     vNormalView = normalize(normalMatrix * normal);
@@ -58,6 +72,15 @@ const fragmentShader = /* glsl */ `
   uniform vec2 uRevealRange;
   uniform vec3 uAccent;
   uniform float uLit;
+  uniform sampler2D uEyes;
+  uniform float uHasEyes;
+  uniform vec4 uEyeRightU;
+  uniform vec4 uEyeRightV;
+  uniform vec4 uEyeLeftU;
+  uniform vec4 uEyeLeftV;
+  uniform float uCrease;
+  uniform float uCreaseHeight;
+  uniform float uCreaseShape;
 
   varying vec2 vUv;
   varying vec3 vNormalObj;
@@ -66,6 +89,9 @@ const fragmentShader = /* glsl */ `
   varying vec3 vViewPos;
   varying vec3 vObjPos;
   varying float vFade;
+  varying float vEye;
+  varying float vEyeShade;
+  varying vec2 vLid;
 
   vec3 background(vec2 p) {
     vec3 c = mix(uBgBottom, uBgTop, smoothstep(0.0, 1.0, p.y));
@@ -75,6 +101,16 @@ const fragmentShader = /* glsl */ `
 
   float faceShade(vec3 n) {
     return 0.6 + 0.4 * max(dot(n, uFaceLight), 0.0);
+  }
+
+  // Height of the double-eyelid crease along the lid (t: 0 inner corner, 1 outer), as a share of
+  // its full height: an in-line tucks into the inner corner, an out-line runs parallel from it,
+  // an in-out starts inside and widens towards the outer corner.
+  float creaseProfile(float t) {
+    float inOut = mix(0.15, 1.0, smoothstep(0.0, 0.8, t));
+    float inLine = 0.92 * smoothstep(0.02, 0.45, t);
+    float outLine = mix(0.8, 1.0, smoothstep(0.0, 0.35, t));
+    return uCreaseShape < 0.0 ? mix(inOut, inLine, -uCreaseShape) : mix(inOut, outLine, uCreaseShape);
   }
 
   void main() {
@@ -94,6 +130,14 @@ const fragmentShader = /* glsl */ `
     vec3 lifted = 1.0 - (1.0 - col) * vec3(0.78, 0.8, 0.8);
     col = mix(col, lifted, uTone * skin);
 
+    // Eye openings: the eyeball, fixed in place behind the lids, shaded along the lid margins.
+    bool eyeball = vEye > 0.5 && uHasEyes > 0.5;
+    if (eyeball) {
+      vec4 p = vec4(vObjPos, 1.0);
+      vec2 eyeUv = vEye > 1.5 ? vec2(dot(uEyeLeftU, p), dot(uEyeLeftV, p)) : vec2(dot(uEyeRightU, p), dot(uEyeRightV, p));
+      col = texture2D(uEyes, eyeUv).rgb * (1.0 - 0.55 * smoothstep(0.0, 1.0, vEyeShade));
+    }
+
     vec3 n = normalize(vNormalObj);
     vec3 n0 = normalize(vNormal0Obj);
     vec3 nv = normalize(vNormalView);
@@ -105,10 +149,22 @@ const fragmentShader = /* glsl */ `
       float fill = max(dot(nv, normalize(vec3(0.65, 0.05, 0.75))), 0.0);
       col *= 0.3 + 0.66 * key + 0.2 * fill;
     } else {
-      // Relative relighting (see file comment).
-      col *= clamp(faceShade(n) / faceShade(n0), 0.7, 1.3);
+      // Relative relighting (see file comment); the eyeball keeps the light it was photographed in.
+      if (!eyeball) col *= clamp(faceShade(n) / faceShade(n0), 0.7, 1.3);
       // A touch of view-dependent shading so turning the head reads as 3D.
       col *= mix(0.8, 1.0, pow(ndv, 0.7));
+    }
+
+    // Double-eyelid crease uCreaseHeight mm above the lashes, shaded like a fold rather than a
+    // line: darkest in the crease, fading softly down the lid below it (the fold's shadow),
+    // ending crisply above it where the fold of skin turns towards the light.
+    if (uCrease > 0.001 && vEye < 0.5 && vLid.y > -50.0) {
+      float t = vLid.x;
+      float d = vLid.y - uCreaseHeight * creaseProfile(clamp(t, 0.0, 1.0));
+      float k = uCrease * smoothstep(-0.03, 0.1, t) * (1.0 - smoothstep(0.95, 1.12, t)) * smoothstep(0.35, 1.2, vLid.y);
+      float shade = d < 0.0 ? exp(-(d * d) / 0.8) : exp(-(d * d) / 0.06);
+      float light = d > 0.0 ? exp(-(d - 0.9) * (d - 0.9) / 0.5) : 0.0;
+      col *= (1.0 - k * 0.3 * shade) * (1.0 + k * 0.08 * light);
     }
 
     // Skin sheen: broad and subtle by default, glassy with the glow control.
@@ -140,6 +196,14 @@ export interface FaceMaterialTextures {
   albedo: THREE.Texture;
   smooth: THREE.Texture;
   mask: THREE.Texture;
+  /** The clean eyeball atlas, when the face has one. */
+  eyes?: THREE.Texture | null;
+}
+
+/** Model-space position -> eyeball atlas uv, per eye (see the API's eyeTexture). */
+export interface EyeMaps {
+  right: { u: number[]; v: number[] };
+  left: { u: number[]; v: number[] };
 }
 
 export type StageTheme = 'dark' | 'light';
@@ -152,7 +216,14 @@ export const STAGE_COLORS: Record<StageTheme, [THREE.Color, THREE.Color]> = {
 
 export const ACCENT = new THREE.Color('#ffffff');
 
-export function createFaceMaterial(textures: FaceMaterialTextures, skinTone: number[], lit: boolean): THREE.ShaderMaterial {
+export function createFaceMaterial(
+  textures: FaceMaterialTextures,
+  skinTone: number[],
+  lit: boolean,
+  eyeMaps: EyeMaps | null = null,
+): THREE.ShaderMaterial {
+  const hasEyes = !!(textures.eyes && eyeMaps);
+  const vec4 = (v: number[] | undefined) => new THREE.Vector4().fromArray(v ?? [0, 0, 0, 0]);
   return new THREE.ShaderMaterial({
     vertexShader,
     fragmentShader,
@@ -177,6 +248,15 @@ export function createFaceMaterial(textures: FaceMaterialTextures, skinTone: num
       uReveal: { value: 1 },
       uRevealRange: { value: new THREE.Vector2(11, -12) },
       uAccent: { value: ACCENT.clone() },
+      uEyes: { value: hasEyes ? textures.eyes! : null },
+      uHasEyes: { value: hasEyes ? 1 : 0 },
+      uEyeRightU: { value: vec4(eyeMaps?.right.u) },
+      uEyeRightV: { value: vec4(eyeMaps?.right.v) },
+      uEyeLeftU: { value: vec4(eyeMaps?.left.u) },
+      uEyeLeftV: { value: vec4(eyeMaps?.left.v) },
+      uCrease: { value: 0 },
+      uCreaseHeight: { value: 7 },
+      uCreaseShape: { value: 0 },
     },
   });
 }

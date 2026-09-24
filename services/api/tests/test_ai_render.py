@@ -37,6 +37,42 @@ def test_prompt_describes_changes_in_words() -> None:
     prompt = build_prompt({}, "front")
     assert "none: show the person exactly as they are" in prompt
     assert "facing the camera straight on" in prompt
+    assert "eyes, eyebrows, hairstyle" in prompt
+
+
+def test_prompt_lets_the_skin_around_the_eyes_change() -> None:
+    values = {"aegyoSal": 0.6, "upperLid": -0.5, "browLift": 0.02}
+    assert describe_changes(values) == [
+        "moderately a soft, natural pretarsal roll (aegyo-sal) just under the lower lashes",
+        "moderately slimmer, less puffy upper eyelids",
+    ]
+    prompt = build_prompt(values, "front")
+    assert "the skin around the eyes" in prompt
+    # The eyes and brows themselves still come from the photo.
+    assert "the eyes themselves (eye shape, iris colour, eyelashes), eyebrow shape and hair" in prompt
+    assert "eyes, eyebrows, hairstyle" not in prompt
+    # A value too small to describe doesn't unlock the eye area.
+    assert "the skin around the eyes" not in build_prompt({"browLift": 0.02, "noseTip": 0.4}, "front")
+
+
+def test_prompt_describes_eyelid_surgery_in_millimetres() -> None:
+    values = {"creaseDepth": 0.6, "creaseHeight": 0.5, "creaseShape": -0.8, "innerCorner": 0.6, "lowerLid": 0.25}
+    lines = describe_changes(values)
+    assert lines[0] == (
+        "a defined double-eyelid crease about 8 mm above the upper lashes, "
+        "as an in-line crease, tucked into the inner corner of the eye"
+    )
+    assert lines[1].startswith("moderately inner eye corners opened towards the nose") and lines[1].endswith(
+        "about 1.5 mm"
+    )
+    assert lines[2].startswith("very subtly the outer lower eyelids") and lines[2].endswith("about 0.5 mm")
+    # Height and line type alone don't make a crease.
+    assert describe_changes({"creaseHeight": 1, "creaseShape": 1}) == []
+    # Surgery on the eyes lets the eye shape and eyelids change; the iris and lashes stay.
+    prompt = build_prompt(values, "front")
+    assert "the eye shape, eyelids and the skin around the eyes" in prompt
+    assert "iris colour, eyelashes, eyebrow shape and hair, hairstyle" in prompt
+    assert "eye shape, iris colour" not in prompt
 
 
 def test_disabled_without_a_provider(client: TestClient, auth: dict) -> None:

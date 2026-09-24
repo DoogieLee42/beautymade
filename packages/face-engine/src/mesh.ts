@@ -1,4 +1,6 @@
-import { smoothstep } from './math';
+import { computeFaceFrame } from './frame';
+import { dot, length, normalize, readVec3, scale, smoothstep, sub } from './math';
+import { LM, REGION, mirrorLandmarks } from './topology/landmarks';
 
 /**
  * Head and neck around the face (full-head models). The shell's vertices follow the
@@ -47,6 +49,13 @@ export interface FaceMesh {
   weld: Uint32Array | null;
   /** True when the mesh includes the head and neck, not just the face. */
   hasHead: boolean;
+  /**
+   * 1 or 2 on the eye openings (the subject's right / left eye), 0 on skin. The openings have
+   * their own vertices along the lid margins (welded to the skin's), so this never blends.
+   */
+  eye: Float32Array;
+  /** How much the eyelids shade the eyeball: 1 along the upper lid margin, less along the lower, 0 inside. */
+  eyeShade: Float32Array;
 }
 
 export interface BuildFaceMeshOptions {
@@ -250,6 +259,105 @@ export function computeEdgeFade(
   return fade;
 }
 
+/** Lid shade along the lower lid margin (the upper lid and lashes shade the eyeball fully). */
+const LOWER_LID_SHADE = 0.45;
+
+/** For each triangle: 1 or 2 when it fills the subject's right or left eye opening, else 0. */
+export function eyeOpeningTriangles(indices: ArrayLike<number>, landmarkCount: number): Uint8Array {
+  const out = new Uint8Array(indices.length / 3);
+  if (landmarkCount < 468) return out;
+  const right = new Set<number>([...REGION.upperLidLeft, ...REGION.lowerLidLeft]);
+  const left = new Set<number>(mirrorLandmarks([...right]));
+  for (let t = 0; t < out.length; t++) {
+    const a = indices[t * 3];
+    const b = indices[t * 3 + 1];
+    const c = indices[t * 3 + 2];
+    if (right.has(a) && right.has(b) && right.has(c)) out[t] = 1;
+    else if (left.has(a) && left.has(b) && left.has(c)) out[t] = 2;
+  }
+  return out;
+}
+
+/** Per-triangle flags after `levels` subdivisions (each triangle's 4 children follow each other). */
+function subdividedFlags(flags: Uint8Array, levels: number): Uint8Array {
+  const k = 4 ** levels;
+  const out = new Uint8Array(flags.length * k);
+  for (let t = 0; t < flags.length; t++) out.fill(flags[t], t * k, (t + 1) * k);
+  return out;
+}
+
+interface EyeSplit {
+  mesh: RawMesh;
+  /** The vertex each appended copy was made from, in order. */
+  copies: Uint32Array;
+  eye: Float32Array;
+  eyeShade: Float32Array;
+}
+
+/**
+ * Gives the eye openings their own vertices: every vertex an opening shares with the skin
+ * around it (the lid margins) is copied onto the end, and the opening's triangles use the
+ * copies. The shader can then draw the eyeball there without blending into the skin.
+ */
+function splitEyeOpenings(mesh: RawMesh, triEye: Uint8Array, landmarkCount: number): EyeSplit {
+  const n = mesh.positions.length / 3;
+  const skinUse = new Uint8Array(n);
+  const eyeUse = new Uint8Array(n);
+  for (let t = 0; t < triEye.length; t++) {
+    for (let k = 0; k < 3; k++) {
+      const v = mesh.indices[t * 3 + k];
+      if (triEye[t]) eyeUse[v] = triEye[t];
+      else skinUse[v] = 1;
+    }
+  }
+  const copies: number[] = [];
+  const copyIndex = new Int32Array(n).fill(-1);
+  for (let v = 0; v < n; v++) {
+    if (!eyeUse[v] || !skinUse[v]) continue;
+    copyIndex[v] = n + copies.length;
+    copies.push(v);
+  }
+  const total = n + copies.length;
+  const positions = new Float32Array(total * 3);
+  const uvs = new Float32Array(total * 2);
+  positions.set(mesh.positions);
+  uvs.set(mesh.uvs);
+  const indices = Uint32Array.from(mesh.indices);
+  for (let t = 0; t < triEye.length; t++) {
+    if (!triEye[t]) continue;
+    for (let k = 0; k < 3; k++) {
+      const v = indices[t * 3 + k];
+      if (copyIndex[v] >= 0) indices[t * 3 + k] = copyIndex[v];
+    }
+  }
+
+  const eye = new Float32Array(total);
+  const eyeShade = new Float32Array(total);
+  for (let v = 0; v < n; v++) if (eyeUse[v] && !skinUse[v]) eye[v] = eyeUse[v];
+  const up = copies.length ? computeFaceFrame(mesh.positions, landmarkCount).axisY : null;
+  copies.forEach((v, k) => {
+    const c = n + k;
+    positions.set(mesh.positions.subarray(v * 3, v * 3 + 3), c * 3);
+    uvs.set(mesh.uvs.subarray(v * 2, v * 2 + 2), c * 2);
+    eye[c] = eyeUse[v];
+    // Which lid the margin vertex belongs to: above or below the line between the eye corners.
+    const [inner, outer] = eyeUse[v] === 1 ? [LM.eyeInnerLeft, LM.eyeOuterLeft] : [LM.eyeInnerRight, LM.eyeOuterRight];
+    const a = readVec3(mesh.positions, inner);
+    const across = sub(readVec3(mesh.positions, outer), a);
+    const dir = normalize(across);
+    const lidUp = normalize(sub(up!, scale(dir, dot(up!, dir))));
+    const side = dot(sub(readVec3(mesh.positions, v), a), lidUp);
+    eyeShade[c] = Math.abs(side) < 0.02 * length(across) ? (1 + LOWER_LID_SHADE) / 2 : side > 0 ? 1 : LOWER_LID_SHADE;
+  });
+  return { mesh: { positions, uvs, indices }, copies: Uint32Array.from(copies), eye, eyeShade };
+}
+
+function identityWeld(vertexCount: number): Uint32Array {
+  const weld = new Uint32Array(vertexCount);
+  for (let i = 0; i < vertexCount; i++) weld[i] = i;
+  return weld;
+}
+
 /** Subdivides a base mesh into a smooth, render-ready {@link FaceMesh}. */
 export function buildFaceMesh(base: BaseMesh, options: BuildFaceMeshOptions = {}): FaceMesh {
   if (base.head && base.positions.length / 3 > base.landmarkCount) return buildHeadMesh(base, base.head, options);
@@ -259,20 +367,31 @@ export function buildFaceMesh(base: BaseMesh, options: BuildFaceMeshOptions = {}
     uvs: Float32Array.from(base.uvs),
     indices: Uint32Array.from(base.indices),
   };
+  const triEye = subdividedFlags(eyeOpeningTriangles(base.indices, base.landmarkCount), subdivisions);
   for (let level = 0; level < subdivisions; level++) raw = subdivideOnce(raw, smoothing);
+  const subdividedCount = raw.positions.length / 3;
+  const split = splitEyeOpenings(raw, triEye, base.landmarkCount);
+  raw = split.mesh;
 
   const vertexCount = raw.positions.length / 3;
+  let weld: Uint32Array | null = null;
+  if (split.copies.length) {
+    weld = identityWeld(vertexCount);
+    split.copies.forEach((v, k) => (weld![subdividedCount + k] = v));
+  }
   const eyeSpan = outerEyeDistance(raw.positions, base.landmarkCount);
   return {
     positions: raw.positions,
-    normals: computeVertexNormals(raw.positions, raw.indices),
+    normals: computeVertexNormals(raw.positions, raw.indices, undefined, weld),
     uvs: raw.uvs,
     indices: vertexCount < 65536 ? Uint16Array.from(raw.indices) : raw.indices,
     vertexCount,
     landmarkCount: base.landmarkCount,
-    edgeFade: computeEdgeFade(raw.positions, raw.indices, fadeWidth * eyeSpan),
-    weld: null,
+    edgeFade: computeEdgeFade(raw.positions, raw.indices, fadeWidth * eyeSpan, weld),
+    weld,
     hasHead: false,
+    eye: split.eye,
+    eyeShade: split.eyeShade,
   };
 }
 
@@ -301,7 +420,11 @@ function buildHeadMesh(base: BaseMesh, head: HeadShell, options: BuildFaceMeshOp
     uvs: Float32Array.from(Array.prototype.slice.call(base.uvs, 0, L * 2)),
     indices: Uint32Array.from(faceTris),
   };
+  const triEye = subdividedFlags(eyeOpeningTriangles(faceTris, L), subdivisions);
   for (let level = 0; level < subdivisions; level++) face = subdivideOnce(face, smoothing);
+  const subdividedCount = face.positions.length / 3;
+  const split = splitEyeOpenings(face, triEye, L);
+  face = split.mesh;
   const F = face.positions.length / 3;
 
   // 2. The subdivided face border, walked in the direction of `oval`.
@@ -338,8 +461,8 @@ function buildHeadMesh(base: BaseMesh, head: HeadShell, options: BuildFaceMeshOp
     uvs[dst * 2 + 1] = head.ringUvs[k * 2 + 1] + (head.ringUvs[k1 * 2 + 1] - head.ringUvs[k * 2 + 1]) * t;
   }
 
-  const weld = new Uint32Array(vertexCount);
-  for (let i = 0; i < vertexCount; i++) weld[i] = i;
+  const weld = identityWeld(vertexCount);
+  split.copies.forEach((v, k) => (weld[subdividedCount + k] = v));
   for (let i = 0; i + 1 < head.weld.length; i += 2) weld[shellIndex(head.weld[i])] = shellIndex(head.weld[i + 1]);
   for (let i = 0; i < R; i++) weld[F + shellCount + i] = ring[i];
 
@@ -352,6 +475,11 @@ function buildHeadMesh(base: BaseMesh, head: HeadShell, options: BuildFaceMeshOp
   indices.set(shellTris.map(shellIndex), face.indices.length);
   indices.set(band, face.indices.length + shellTris.length);
 
+  const eye = new Float32Array(vertexCount);
+  const eyeShade = new Float32Array(vertexCount);
+  eye.set(split.eye);
+  eyeShade.set(split.eyeShade);
+
   const eyeSpan = outerEyeDistance(positions, L);
   return {
     positions,
@@ -363,6 +491,8 @@ function buildHeadMesh(base: BaseMesh, head: HeadShell, options: BuildFaceMeshOp
     edgeFade: computeEdgeFade(positions, indices, fadeWidth * eyeSpan, weld),
     weld,
     hasHead: true,
+    eye,
+    eyeShade,
   };
 }
 

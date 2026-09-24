@@ -114,14 +114,14 @@ export function UnderlineTabs<T extends string>({
         testID={t.testID}
         style={[styles.tab, stretch && styles.tabStretch]}
       >
-        <View style={styles.tabInner}>
+        <View style={[styles.tabInner, stretch && styles.tabInnerTight]}>
           <View style={styles.tabLabelRow}>
             <Text style={[styles.tabText, on && styles.tabTextOn]} numberOfLines={1}>
               {t.label}
             </Text>
             {t.dot && <View style={styles.tabDot} />}
           </View>
-          <View style={[styles.tabBar, on && styles.tabBarOn]} />
+          <View style={[styles.tabBar, stretch && styles.tabBarTight, on && styles.tabBarOn]} />
         </View>
       </Pressable>
     );
@@ -166,10 +166,13 @@ const styles = StyleSheet.create({
   tab: { paddingHorizontal: 6, paddingTop: 4, alignItems: 'center' },
   tabStretch: { flex: 1, paddingHorizontal: 0 },
   tabInner: { paddingHorizontal: 6, alignItems: 'center' },
+  // Stretched tabs share the width, so six of them still fit a 375 pt phone.
+  tabInnerTight: { paddingHorizontal: 3 },
   tabLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 3, height: 38 },
   tabText: { fontSize: 15, fontWeight: '500', color: colors.muted },
   tabTextOn: { color: colors.ink, fontWeight: '700' },
   tabDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.ink, marginTop: -8 },
   tabBar: { height: 2, alignSelf: 'stretch', backgroundColor: 'transparent', marginHorizontal: -6 },
+  tabBarTight: { marginHorizontal: -3 },
   tabBarOn: { backgroundColor: colors.ink },
 });

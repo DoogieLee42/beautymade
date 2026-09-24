@@ -59,17 +59,59 @@ export interface FaceMeshData {
   head?: { oval: number[]; rim: number[]; ringUvs: number[]; weld: number[] } | null;
 }
 
+export interface EyeMeasurements {
+  widthMm: number;
+  heightMm: number;
+  /** Canthal tilt: positive when the outer corner sits higher than the inner one. */
+  tiltDeg: number;
+  /** Pupil centre to the upper (mrd1) and lower (mrd2) lid margin. */
+  mrd1Mm: number;
+  mrd2Mm: number;
+}
+
+/** Estimated from the front photo, using the iris width (about 11.7 mm) as the ruler. */
+export interface EyeAnalysis {
+  irisDiameterMm: number;
+  /** The person's own right and left eyes. */
+  right: EyeMeasurements;
+  left: EyeMeasurements;
+  intercanthalMm: number;
+  interpupillaryMm: number;
+  /** Outer eye corner to outer eye corner (missing on the first measured models). */
+  outerCanthalMm?: number;
+  /** Distance between the inner eye corners divided by the average eye width. */
+  intercanthalRatio: number;
+}
+
+/** Where a model-space point p falls in the eyeball atlas: u = u . (p, 1), v = v . (p, 1). */
+export interface EyeMap {
+  u: number[];
+  v: number[];
+}
+
+/** The clean eyeball atlas (the person's right eye on the left): the eye openings are drawn from it. */
+export interface EyeTexture {
+  width: number;
+  height: number;
+  right: EyeMap;
+  left: EyeMap;
+}
+
 /** Texture sources are http(s) URLs or data: URLs (the bundled demo face). */
 export interface FaceModel {
   id: string;
   createdAt: string;
   thumbnailUrl: string | null;
   mesh: FaceMeshData;
-  textures: { albedo: string; smooth: string; mask: string };
+  textures: { albedo: string; smooth: string; mask: string; eyes?: string | null };
   atlasSize: number;
   skinTone: number[];
   views?: Record<string, { yaw: number; pitch: number; roll: number; textureShare?: number }>;
   quality?: { viewsUsed?: string[]; viewsSkipped?: string[]; multiViewResidual?: number };
+  /** Missing on the demo face, on scans made before eye measurements, and when they weren't reliable. */
+  eyes?: EyeAnalysis | null;
+  /** With `textures.eyes`: scans that could be measured get a clean eyeball for eye-opening edits. */
+  eyeTexture?: EyeTexture | null;
   /** True for the stylised sample face shipped with the app. */
   isDemo?: boolean;
 }

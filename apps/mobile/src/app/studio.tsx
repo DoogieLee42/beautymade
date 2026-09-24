@@ -4,6 +4,7 @@ import {
   applyPreset as applyPresetValues,
   categoryLabel,
   controlsInCategory,
+  formatControlValue,
   interpolateValues,
   isPresetActive,
   presetsInCategory,
@@ -16,10 +17,11 @@ import {
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { EyeAnalysisCard } from '../components/studio/EyeAnalysisCard';
 import { PresetTile } from '../components/studio/PresetTile';
 import { Button, IconButton, Segmented, UnderlineTabs, ValueSlider, toast } from '../components/ui';
 import { useLooks, useStudioFace } from '../hooks/queries';
@@ -219,12 +221,18 @@ export default function Studio() {
       <View style={styles.sheet}>
         <UnderlineTabs
           stretch
-          tabs={CATEGORIES.map((c) => ({ value: c.id, label: c.label, dot: categoryChanged(values, c.id), testID: `tab-${c.id}` }))}
+          tabs={CATEGORIES.map((c) => ({
+            value: c.id,
+            label: c.short ?? c.label,
+            dot: categoryChanged(values, c.id),
+            testID: `tab-${c.id}`,
+          }))}
           value={tab}
           onChange={onTab}
         />
         <ScrollView style={styles.flex} contentContainerStyle={styles.sheetContent} showsVerticalScrollIndicator={false}>
           <Text style={styles.sectionTitle}>{categoryLabel(tab)}</Text>
+          {tab === 'eyes' && face && <EyeAnalysisCard eyes={face.eyes} isDemo={isDemo} onScan={() => router.push('/scan')} />}
           <View style={styles.presets}>
             {presetsInCategory(tab).map((p) => (
               <PresetTile
@@ -239,23 +247,26 @@ export default function Studio() {
             ))}
           </View>
           <View style={styles.sliders}>
-            {controlsInCategory(tab).map((c) => (
-              <ValueSlider
-                key={c.id}
-                label={c.short}
-                value={values[c.id] ?? 0}
-                min={c.min}
-                max={c.max}
-                onStart={() => {
-                  stopAnimation();
-                  setShowing('look');
-                  studio.beginEdit();
-                  focusOn(c.focus);
-                }}
-                onEnd={() => studio.endEdit()}
-                onChange={(v) => studio.setValue(c.id, v)}
-                testID={`slider-${c.id}`}
-              />
+            {controlsInCategory(tab).map((c, i, all) => (
+              <Fragment key={c.id}>
+                {c.group && c.group !== all[i - 1]?.group && <Text style={styles.group}>{c.group}</Text>}
+                <ValueSlider
+                  label={c.short}
+                  value={values[c.id] ?? 0}
+                  min={c.min}
+                  max={c.max}
+                  display={c.readout ? formatControlValue(c.id, values[c.id] ?? 0) : undefined}
+                  onStart={() => {
+                    stopAnimation();
+                    setShowing('look');
+                    studio.beginEdit();
+                    focusOn(c.focus);
+                  }}
+                  onEnd={() => studio.endEdit()}
+                  onChange={(v) => studio.setValue(c.id, v)}
+                  testID={`slider-${c.id}`}
+                />
+              </Fragment>
             ))}
           </View>
         </ScrollView>
@@ -339,6 +350,7 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 18, fontWeight: '700', color: colors.ink, letterSpacing: -0.3 },
   presets: { flexDirection: 'row', justifyContent: 'space-between' },
   sliders: { gap: 2, marginTop: 2 },
+  group: { fontSize: 12, fontWeight: '700', color: colors.muted, marginTop: 10, marginBottom: 2 },
   footer: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 8 },
   apply: { flex: 1.1 },
 });

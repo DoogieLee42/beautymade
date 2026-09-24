@@ -52,7 +52,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   values: {},
   baseline: {},
   look: null,
-  tab: 'nose',
+  tab: 'eyes',
   autoFocus: true,
   mirrored: true,
   ...cleanSession,

@@ -46,11 +46,14 @@ def full_out(svc: Services, face: FaceModel) -> FaceModelOut:
             albedo=storage.url(f"{prefix}/albedo.jpg"),
             smooth=storage.url(f"{prefix}/smooth.jpg"),
             mask=storage.url(f"{prefix}/mask.png"),
+            eyes=storage.url(f"{prefix}/eyes.jpg") if model.get("eyeTexture") else None,
         ),
         atlas_size=model.get("atlasSize", 1024),
         skin_tone=model.get("skinTone", [0.8, 0.65, 0.58]),
         views=model.get("views", {}),
         quality=model.get("quality", {}),
+        eyes=model.get("eyes"),
+        eye_texture=model.get("eyeTexture"),
     )
 
 

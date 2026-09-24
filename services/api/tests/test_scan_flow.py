@@ -53,6 +53,13 @@ def test_full_scan_to_face_model(client: TestClient, auth: dict) -> None:
     assert set(face["quality"]["viewsUsed"]) == {"front", "left", "right"}
     assert face["atlasSize"] in (1024, 2048)
     assert len(face["skinTone"]) == 3
+    eyes = face["eyes"]  # measured on the front photo (see test_eyes.py)
+    assert 20 < eyes["right"]["widthMm"] < 32 and 20 < eyes["left"]["widthMm"] < 32
+    assert 0.9 < eyes["intercanthalRatio"] < 1.6
+    # The clean eyeball atlas and where the model's eyes fall in it (see test_eyeball.py).
+    assert len(face["eyeTexture"]["right"]["u"]) == 4 and len(face["eyeTexture"]["left"]["v"]) == 4
+    atlas = client.get(face["textures"]["eyes"])
+    assert atlas.status_code == 200 and atlas.headers["content-type"] == "image/jpeg"
 
     # The fused shape lives in the canonical frame: nose in front, chin below the forehead.
     pos = np.array(face["mesh"]["positions"]).reshape(-1, 3)

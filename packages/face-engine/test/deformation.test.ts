@@ -5,6 +5,7 @@ import {
   DeformationModel,
   LM,
   PRESETS,
+  REGION,
   SHAPE_CONTROLS,
   buildFaceMesh,
   canonicalBaseMesh,
@@ -63,6 +64,14 @@ describe('DeformationModel', () => {
 
   it('keeps each control local to its region', () => {
     const far: Record<string, number[]> = {
+      lidRaise: [LM.noseTip, LM.browLeft, LM.lowerLidLeft],
+      innerCorner: [LM.noseTip, LM.browLeft, LM.eyeOuterLeft],
+      outerCorner: [LM.noseTip, LM.browLeft, LM.eyeInnerLeft],
+      lowerLid: [LM.noseTip, LM.browLeft, LM.upperLidLeft],
+      aegyoSal: [LM.noseTip, LM.browLeft, LM.upperLidLeft, 230],
+      underEye: [LM.noseTip, LM.browLeft, LM.upperLidLeft, 23],
+      upperLid: [LM.noseTip, LM.browLeft, LM.lowerLidLeft],
+      browLift: [LM.noseTip, LM.browLeft, 52, LM.lowerLidLeft],
       noseBridge: [LM.menton, LM.mouthCornerLeft, LM.eyeOuterLeft],
       noseTip: [LM.menton, LM.upperLipTop, LM.eyeInnerLeft],
       alarWidth: [LM.noseTip, LM.menton, LM.eyeOuterLeft],
@@ -113,6 +122,71 @@ describe('DeformationModel', () => {
     expect(moved('lift', 135)[1]).toBeGreaterThan(0.2);
     // Longer chin moves the menton down.
     expect(moved('chinLength', LM.menton)[1]).toBeLessThan(-0.3);
+  });
+
+  it('keeps the lash lines of both eyes in place', () => {
+    const margins = [...REGION.upperLidLeft, ...REGION.lowerLidLeft];
+    for (const id of ['aegyoSal', 'underEye', 'upperLid', 'browLift'] as ShapeControlId[]) {
+      for (const lm of [...margins, ...margins.map(mirrorLandmark)]) {
+        expect(norm(moved(id, lm)), `${id} moved lid margin ${lm}`).toBeLessThan(1e-4);
+        expect(norm(moved(id, lm, -1)), `${id} moved lid margin ${lm}`).toBeLessThan(1e-4);
+      }
+    }
+  });
+
+  it('opens the eyes by the millimetres each procedure promises', () => {
+    const mm = S / 90; // world units per mm, the canonical face being ~90 mm between the outer eye corners
+    // Ptosis correction raises the upper lid over the pupil by ~2 mm; the lower lid stays.
+    expect(moved('lidRaise', LM.upperLidLeft)[1]).toBeGreaterThan(1.7 * mm);
+    expect(norm(moved('lidRaise', LM.lowerLidLeft))).toBeLessThan(1e-4);
+    expect(norm(moved('lidRaise', LM.eyeOuterLeft))).toBeLessThan(0.05 * mm);
+    // Epicanthoplasty moves the inner corners towards the nose (the subject's right eye is on -x).
+    expect(moved('innerCorner', LM.eyeInnerLeft)[0]).toBeGreaterThan(2.4 * mm);
+    expect(moved('innerCorner', LM.eyeInnerRight)[0]).toBeLessThan(-2.4 * mm);
+    // Lateral canthoplasty moves the outer corners outwards.
+    expect(moved('outerCorner', LM.eyeOuterLeft)[0]).toBeLessThan(-2.9 * mm);
+    expect(moved('outerCorner', LM.eyeOuterRight)[0]).toBeGreaterThan(2.9 * mm);
+    // Lower-lid lowering drops the outer part of the lower lid; the upper lid stays.
+    expect(moved('lowerLid', 144)[1]).toBeLessThan(-1.8 * mm);
+    expect(norm(moved('lowerLid', LM.upperLidLeft))).toBeLessThan(1e-4);
+  });
+
+  it('moves eye edits by real millimetres of the measured face', () => {
+    // On a face measured at 60 mm between the outer eye corners, 2.5 mm is a bigger share.
+    const measured = new DeformationModel(mesh, undefined, 60);
+    expect(measured.maxDisplacement('innerCorner') / model.maxDisplacement('innerCorner')).toBeCloseTo(90 / 60, 3);
+    expect(measured.maxDisplacement('noseTip')).toBeCloseTo(model.maxDisplacement('noseTip'), 6);
+  });
+
+  it('knows how high every vertex sits above the upper lashes', () => {
+    const lid = model.lidCoordinates();
+    const along = (v: number) => lid[v * 2];
+    const height = (v: number) => lid[v * 2 + 1];
+    for (const v of [...REGION.upperLidLeft, ...REGION.upperLidLeft.map(mirrorLandmark)]) {
+      expect(Math.abs(height(v)), `lid margin ${v}`).toBeLessThan(0.01);
+    }
+    for (const [inner, outer] of [
+      [LM.eyeInnerLeft, LM.eyeOuterLeft],
+      [LM.eyeInnerRight, LM.eyeOuterRight],
+    ]) {
+      expect(along(inner)).toBeCloseTo(0, 5);
+      expect(along(outer)).toBeCloseTo(1, 5);
+    }
+    expect(height(LM.browLeft)).toBeGreaterThan(12);
+    expect(height(LM.browLeft)).toBeLessThan(30);
+    expect(height(LM.lowerLidLeft)).toBeLessThan(-4);
+  });
+
+  it('shapes the skin around the eyes', () => {
+    // Aegyo-sal pushes the roll under the lower lashes forwards; under-eye filling works lower down.
+    expect(moved('aegyoSal', 23)[2]).toBeGreaterThan(0.15);
+    expect(moved('underEye', 230)[2]).toBeGreaterThan(0.12);
+    // Upper-lid volume fills the hollow under the brow bone (or slims it at negative values).
+    expect(moved('upperLid', 222)[2]).toBeGreaterThan(0.12);
+    expect(moved('upperLid', 222, -1)[2]).toBeLessThan(-0.12);
+    // The brow lift raises the hooding skin over the outer half of the lid.
+    expect(moved('browLift', 224)[1]).toBeGreaterThan(0.15);
+    expect(moved('browLift', mirrorLandmark(224))[1]).toBeGreaterThan(0.15);
   });
 
   it('grows lips away from the mouth seam', () => {

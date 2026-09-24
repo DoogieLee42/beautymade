@@ -6,7 +6,8 @@ Photos -> 3D face model.
   3. head       fit the head template (skull, ears, neck) around the fused face
   4. texture    bake the photos into a face chart and a head chart (visibility-aware,
                 multi-band blended; the head uses hair/skin segmentation)
-  5. finish     skin mask, smoothed skin texture, thumbnail, model.json
+  5. finish     skin mask, smoothed skin texture, thumbnail, eye measurements and eyeball
+                texture, model.json
 
 The texture is two square charts side by side: the face (canonical MediaPipe layout) on
 the left, the rest of the head on the right. The mobile app subdivides the face, stitches
@@ -24,6 +25,8 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from .eyeball import build_eye_texture
+from .eyes import eye_frame, measure_eyes
 from .geometry import ViewGeometry, fuse_views, head_pose, to_camera_space
 from .head import HeadMesh, fit_head
 from .landmarker import FaceLandmarker, shared_landmarker
@@ -69,6 +72,7 @@ class ReconstructionResult:
     mask_png: bytes
     thumbnail_jpg: bytes
     stats: dict = field(default_factory=dict)
+    eyes_jpg: bytes | None = None  # the clean eyeball atlas, when the eyes could be measured
 
 
 def _noop(_: float, __: str) -> None:
@@ -169,6 +173,17 @@ def reconstruct(
     )
     smooth = smooth_skin(albedo, (albedo.shape[1], albedo.shape[0]))
     thumbnail = _thumbnail(photos["front"], front_analysis)
+    front_landmarks = front_analysis.detection.landmarks  # type: ignore[union-attr]
+    eyes = measure_eyes(front_landmarks, front_analysis.width, front_analysis.height)
+    eye_texture = None
+    if eyes is not None:
+        front_geom = next(g for g in fused.views if g.name == "front")
+        eye_texture = build_eye_texture(
+            photos["front"],
+            eye_frame(front_landmarks, front_analysis.width, front_analysis.height),  # type: ignore[arg-type]
+            head.positions[:LANDMARK_COUNT],
+            lambda points: _project(front_geom, points),
+        )
 
     views_meta = {}
     for geom in fused.views:
@@ -187,6 +202,10 @@ def reconstruct(
         "atlasSize": CHART_SIZE,
         "atlas": {"width": albedo.shape[1], "height": albedo.shape[0]},
         "skinTone": [round(float(c) / 255.0, 4) for c in skin_rgb],
+        "eyes": eyes,
+        "eyeTexture": (
+            {"width": eye_texture.size[0], "height": eye_texture.size[1], **eye_texture.maps} if eye_texture else None
+        ),
         "views": views_meta,
         "quality": {
             "viewsUsed": list(analyses.keys()),
@@ -202,6 +221,7 @@ def reconstruct(
         mask_png=_encode_png(mask),
         thumbnail_jpg=_encode_jpg(thumbnail, 88),
         stats={"seconds": round(time.perf_counter() - started, 2), "atlasSize": CHART_SIZE},
+        eyes_jpg=_encode_jpg(eye_texture.image, 92) if eye_texture else None,
     )
     progress(1.0, "finishing")
     return result
@@ -230,6 +250,12 @@ def _mesh_payload(head: HeadMesh) -> dict:
         "landmarkCount": LANDMARK_COUNT,
         "head": shell_info,
     }
+
+
+def _project(view: ViewGeometry, points: np.ndarray) -> np.ndarray:
+    """Model-space points -> pixels of that view's photo, through the fitted pose."""
+    camera = view.to_face.invert(points)
+    return np.stack([camera[:, 0], -camera[:, 1]], axis=1)
 
 
 def _vertex_pixels(head: HeadMesh, landmark_px: np.ndarray, camera_space: np.ndarray) -> np.ndarray:

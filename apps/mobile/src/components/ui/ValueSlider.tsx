@@ -14,6 +14,8 @@ interface ValueSliderProps {
   onChange(value: number): void;
   onStart?(): void;
   onEnd?(value: number): void;
+  /** Readout in real units ("2.5mm", "인아웃"); the plain value when absent. */
+  display?: string;
   testID?: string;
 }
 
@@ -28,7 +30,7 @@ function tick() {
  * Compact slider row: label, track, value. Bipolar ranges (-1..1) fill from the centre
  * with a soft detent and haptic tick at zero; double-tap resets.
  */
-export function ValueSlider({ label, value, min, max, onChange, onStart, onEnd, testID }: ValueSliderProps) {
+export function ValueSlider({ label, value, min, max, onChange, onStart, onEnd, display, testID }: ValueSliderProps) {
   const [width, setWidth] = useState(0);
   const last = useRef(value);
   const bipolar = min < 0;
@@ -108,7 +110,9 @@ export function ValueSlider({ label, value, min, max, onChange, onStart, onEnd, 
           {width > 0 && <View style={[styles.thumb, { left: pos - THUMB / 2 }]} />}
         </View>
       </GestureDetector>
-      <Text style={[styles.value, value !== 0 && styles.valueOn]}>{formatDecimal(value)}</Text>
+      <Text style={[styles.value, display !== undefined && styles.valueWide, value !== 0 && styles.valueOn]} numberOfLines={1}>
+        {display ?? formatDecimal(value)}
+      </Text>
     </View>
   );
 }
@@ -132,5 +136,6 @@ const styles = StyleSheet.create({
     boxShadow: '0px 1px 4px rgba(0, 0, 0, 0.28)',
   },
   value: { width: 36, textAlign: 'right', fontSize: 14, color: colors.muted, fontVariant: ['tabular-nums'] },
+  valueWide: { width: 58 },
   valueOn: { color: colors.ink, fontWeight: '600' },
 });

@@ -36,6 +36,9 @@ export const LM = {
   eyeOuterRight: 263,
   eyeInnerLeft: 133,
   eyeInnerRight: 362,
+  upperLidLeft: 159,
+  lowerLidLeft: 145,
+  browLeft: 105,
 } as const;
 
 /** Landmarks on the subject's right half (viewer-left). Mirror with {@link mirrorLandmark}. */
@@ -58,6 +61,11 @@ export const REGION = {
   jowlLeft: [135, 138, 169, 210, 214],
   midCheekLeft: [206, 216, 192, 212],
   nasolabialLeft: [206, 216, 92, 165],
+  /** Upper and lower lid margins, from the inner to the outer eye corner. */
+  upperLidLeft: [133, 173, 157, 158, 159, 160, 161, 246, 33],
+  lowerLidLeft: [133, 155, 154, 153, 145, 144, 163, 7, 33],
+  /** Skin above the outer half of the upper lid, where a sagging lid hoods the eye. */
+  lidHoodLeft: [225, 224, 30, 29],
 } as const;
 
 let mirrorTable: Int32Array | null = null;
