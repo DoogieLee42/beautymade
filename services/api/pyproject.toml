@@ -14,7 +14,8 @@ dependencies = [
   "python-multipart>=0.0.9",
   "numpy>=1.26",
   "opencv-python-headless>=4.9",
-  "mediapipe>=0.10.30",
+  # 1.0.1's macOS wheel aborts on FaceLandmarker creation ("Check failed: service_ Service is unavailable").
+  "mediapipe>=0.10.30,!=1.0.1",
 ]
 
 [dependency-groups]
