@@ -22,9 +22,27 @@ export function createThreeRenderer(gl: ExpoWebGLRenderingContext, pixelRatio: n
     removeEventListener: () => {},
     getContext: () => gl,
   } as unknown as HTMLCanvasElement;
-  const renderer = new THREE.WebGLRenderer({ canvas, context: gl });
+  const renderer = withoutWebGL1Class(gl, () => new THREE.WebGLRenderer({ canvas, context: gl }));
   renderer.setPixelRatio(pixelRatio);
   return renderer;
+}
+
+/**
+ * three.js (r163+) rejects any context that is `instanceof WebGLRenderingContext`, taking it
+ * for WebGL 1. expo-gl makes its WebGL2RenderingContext extend WebGLRenderingContext, so its
+ * WebGL 2 contexts fail that test too. Hide the WebGL 1 class while three.js looks, but only
+ * for a context that really is WebGL 2.
+ */
+function withoutWebGL1Class<T>(gl: ExpoWebGLRenderingContext, create: () => T): T {
+  const scope = globalThis as { WebGLRenderingContext?: unknown };
+  const webgl1 = scope.WebGLRenderingContext;
+  if (typeof WebGL2RenderingContext === 'undefined' || !(gl instanceof WebGL2RenderingContext)) return create();
+  scope.WebGLRenderingContext = undefined;
+  try {
+    return create();
+  } finally {
+    scope.WebGLRenderingContext = webgl1;
+  }
 }
 
 /** Saves an offscreen render target to a JPEG file and returns its file:// URI. */
