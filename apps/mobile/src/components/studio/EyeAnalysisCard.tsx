@@ -16,8 +16,9 @@ function tiltText(deg: number): { value: string; hint: string } {
 }
 
 /**
- * "My eyes" measurements for the studio's eye tab. Without measurements (the sample face, or
- * a scan from before they existed) it invites the user to scan instead.
+ * Eye measurements for the studio's eye tab: the user's own, or the sample face's with an
+ * invitation to scan. Without measurements (a scan from before they existed) it invites the
+ * user to scan again instead.
  */
 export function EyeAnalysisCard({
   eyes,
@@ -51,7 +52,7 @@ export function EyeAnalysisCard({
   return (
     <View style={styles.card} testID="eye-analysis">
       <View style={styles.header}>
-        <Text style={styles.title}>내 눈 분석</Text>
+        <Text style={styles.title}>{isDemo ? '샘플 얼굴 눈 분석' : '내 눈 분석'}</Text>
         <Text style={styles.note}>홍채 지름 {eyes.irisDiameterMm}mm 기준 추정치</Text>
       </View>
       <View style={styles.grid}>
@@ -65,6 +66,12 @@ export function EyeAnalysisCard({
           </View>
         ))}
       </View>
+      {isDemo && (
+        <Pressable onPress={onScan} style={({ pressed }) => [styles.scan, pressed && { opacity: 0.7 }]} testID="eye-analysis-scan">
+          <Text style={styles.scanText}>내 얼굴을 스캔하면 내 눈으로 분석해 드려요</Text>
+          <Ionicons name="chevron-forward" size={14} color={colors.ink} />
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -79,6 +86,15 @@ const styles = StyleSheet.create({
   label: { fontSize: 12, color: colors.muted, fontWeight: '500' },
   value: { fontSize: 19, color: colors.ink, fontWeight: '700', letterSpacing: -0.4 },
   hint: { fontSize: 11, color: colors.muted },
+  scan: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.line,
+  },
+  scanText: { flex: 1, fontSize: 13, fontWeight: '600', color: colors.ink },
   invite: {
     flexDirection: 'row',
     alignItems: 'center',

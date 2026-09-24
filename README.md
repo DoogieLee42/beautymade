@@ -129,6 +129,8 @@ AI 고화질 보기를 켜면 그 요청의 정면 사진과 3D 미리보기가 
 
 ## 사용한 외부 자료
 
+- 샘플 얼굴: 앱 디자인 시안의 AI 생성 인물 이미지(실존 인물 아님)를 스캔과 같은 과정으로 3D로 만든 것
+  (`services/api/scripts/data/demo_face.jpg` → `scripts/make_demo_face.py`).
 - 얼굴 인식 · 머리카락/피부 분리: Google MediaPipe Face Landmarker, Selfie Multiclass Segmenter (Apache-2.0)
 - 머리 · 귀 · 목 형태: MakeHuman hm08 기본 메시 (CC0). `services/api/scripts/build_head_template.py`가
   원본을 내려받아(SHA-256 고정) 얼굴 부분을 잘라내고 `head_template.npz`로 만들어요.

@@ -3,8 +3,9 @@ import model from '../../assets/demo-face/model.json';
 import { DEMO_TEXTURES } from './demoFaceTextures.generated';
 
 /**
- * Stylised sample face shipped with the app (the canonical MediaPipe face with a painted
- * porcelain texture). Used before the first scan and in offline demo mode.
+ * Sample face shipped with the app: an AI-generated portrait (not a real person) put through
+ * the same reconstruction as a scan (services/api/scripts/make_demo_face.py), eye
+ * measurements and eyeball included. Used before the first scan and in offline demo mode.
  */
 export const DEMO_FACE: FaceModel = {
   id: 'demo-face',
@@ -14,5 +15,7 @@ export const DEMO_FACE: FaceModel = {
   textures: DEMO_TEXTURES,
   atlasSize: model.atlasSize,
   skinTone: model.skinTone,
+  eyes: model.eyes,
+  eyeTexture: model.eyeTexture,
   isDemo: true,
 };

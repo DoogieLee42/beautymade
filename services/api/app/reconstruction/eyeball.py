@@ -22,6 +22,7 @@ import cv2
 import numpy as np
 
 from .eyes import IRIS_DIAMETER_MM, LEFT_EYE, RIGHT_EYE, EyeFrame, EyeIndices
+from .texture import pull_push
 
 EYE_MM = (44.0, 22.0)  # width x height around each iris centre
 PX_PER_MM = 512 / EYE_MM[0]  # ~11.6 px/mm, finer than the photo so nothing is lost
@@ -91,7 +92,7 @@ def _eyeball(photo: np.ndarray, frame: EyeFrame, eye: EyeIndices, w: int, h: int
     # 4. The white of the eye: extended from the white the photo shows (never from the iris) ...
     white_seen = seen & (dist > radius + 0.8 * PX_PER_MM)
     white = np.median(img[white_seen], axis=0) if white_seen.sum() > 20 else np.array([215.0, 205.0, 200.0])
-    sclera = _pull_push(img, white_seen, white)
+    sclera = pull_push(img, white_seen, white)
     # ... with the iris laid over it, its edge softened like the limbus in a photo.
     alpha = np.clip((radius - dist) / (0.3 * PX_PER_MM) + 0.5, 0, 1)[..., None]
     hidden = sclera * (1 - alpha) + iris_img.astype(np.float32) * alpha
@@ -163,25 +164,6 @@ def _complete_iris(img: np.ndarray, seen: np.ndarray, centre: tuple[float, float
         size,
         cv2.WARP_POLAR_LINEAR | cv2.WARP_INVERSE_MAP | cv2.INTER_LINEAR,
     )
-
-
-def _pull_push(img: np.ndarray, known: np.ndarray, fallback: np.ndarray) -> np.ndarray:
-    """A smooth continuation of the known pixels over the whole image (float RGB)."""
-    color = img.astype(np.float32) * known[..., None]
-    weight = known.astype(np.float32)
-    levels = []
-    while min(weight.shape) >= 4:
-        levels.append((color, weight))
-        color, weight = cv2.pyrDown(color), cv2.pyrDown(weight)
-    total = weight.sum()
-    mean = color.reshape(-1, 3).sum(axis=0) / total if total > 1e-6 else np.asarray(fallback, np.float32)
-    fill = np.where(weight[..., None] > 1e-4, color / np.maximum(weight, 1e-6)[..., None], mean)
-    for level_color, level_weight in reversed(levels):
-        fill = cv2.resize(fill, (level_weight.shape[1], level_weight.shape[0]), interpolation=cv2.INTER_LINEAR)
-        own = level_color / np.maximum(level_weight, 1e-6)[..., None]
-        trust = np.clip(level_weight * 2, 0, 1)[..., None]
-        fill = trust * own + (1 - trust) * fill
-    return np.where(known[..., None], img.astype(np.float32), fill)
 
 
 def _caruncle(

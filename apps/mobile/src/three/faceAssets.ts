@@ -48,7 +48,6 @@ async function build(face: FaceModel): Promise<LoadedFace> {
     textures: { albedo, smooth, mask, eyes },
     eyeMaps: eyes && face.eyeTexture ? { right: face.eyeTexture.right, left: face.eyeTexture.left } : null,
     skinTone: face.skinTone,
-    lit: !!face.isDemo,
   };
 }
 

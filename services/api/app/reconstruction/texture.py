@@ -30,6 +30,9 @@ from .topology import (
 
 ATLAS_MARGIN = 0.02
 FILL_SCORE = 0.035  # a photo that sees the surface at ~70 degrees or better beats the fill colour
+# On the face (no fill colour), photo scores below which the stretched photo gives way to the
+# continued skin around it: ~65 degrees from the front camera and steeper (front-only scans).
+GRAZING = (0.05, 0.16)
 FILL_LIGHT = np.array([0.2, 0.45, 0.87]) / np.linalg.norm([0.2, 0.45, 0.87])
 
 
@@ -230,9 +233,26 @@ def bake_chart(views: list[ViewTexture], mesh: BakeMesh, chart: Chart, size: int
     best[scores_arr.max(0) <= 1e-6] = fallback
 
     albedo = _multiband_blend(raster, samples_arr, best, len(names), fallback)
+    if chart.fill is None:
+        albedo = _continue_skin_where_grazing(albedo, raster, scores_arr.max(0))
     albedo = _fill_background(albedo, raster.coverage)
     share = {name: float((best == i).mean()) for i, name in enumerate(names)}
     return BakeResult(albedo=albedo, weights=share, coverage=raster.coverage)
+
+
+def _continue_skin_where_grazing(albedo: np.ndarray, raster: AtlasRaster, score: np.ndarray) -> np.ndarray:
+    """
+    Where no photo sees the face well (its sides, in a front-only scan) the photo only paints
+    streaks stretched across the surface: continue the well-seen skin over those parts instead.
+    """
+    t = np.clip((score - GRAZING[0]) / (GRAZING[1] - GRAZING[0]), 0, 1)
+    trust = raster.scatter((t * t * (3 - 2 * t)).astype(np.float32))
+    seen = raster.coverage & (trust > 0.5)
+    if seen[raster.coverage].all():
+        return albedo
+    skin = pull_push(albedo, seen)
+    mixed = albedo * trust[..., None] + skin * (1 - trust[..., None])
+    return np.where(raster.coverage[..., None], mixed.round(), albedo).astype(np.uint8)
 
 
 def _fill_samples(raster: AtlasRaster, mesh: BakeMesh, fill: HeadFill, hair_weight: np.ndarray) -> np.ndarray:
@@ -317,6 +337,32 @@ def _fill_background(img: np.ndarray, coverage: np.ndarray) -> np.ndarray:
         fill = cv2.resize(fill, (level.shape[1], level.shape[0]), interpolation=cv2.INTER_LINEAR)
         fill = np.where(level_known[..., None] > 0.5, level, fill)
     return np.where(known[..., None], out, np.clip(fill, 0, 255).astype(np.uint8))
+
+
+def pull_push(img: np.ndarray, known: np.ndarray, fallback: np.ndarray | None = None) -> np.ndarray:
+    """
+    A smooth continuation of the known pixels over the whole image (float RGB), however little
+    of it is known; `fallback` colours an image with nothing known.
+    """
+    color = img.astype(np.float32) * known[..., None]
+    weight = known.astype(np.float32)
+    levels = []
+    while min(weight.shape) >= 4:
+        levels.append((color, weight))
+        color, weight = cv2.pyrDown(color), cv2.pyrDown(weight)
+    total = weight.sum()
+    mean = (
+        color.reshape(-1, 3).sum(axis=0) / total
+        if total > 1e-6
+        else np.asarray(fallback if fallback is not None else [128, 128, 128], np.float32)
+    )
+    fill = np.where(weight[..., None] > 1e-4, color / np.maximum(weight, 1e-6)[..., None], mean)
+    for level_color, level_weight in reversed(levels):
+        fill = cv2.resize(fill, (level_weight.shape[1], level_weight.shape[0]), interpolation=cv2.INTER_LINEAR)
+        own = level_color / np.maximum(level_weight, 1e-6)[..., None]
+        trust = np.clip(level_weight * 2, 0, 1)[..., None]
+        fill = trust * own + (1 - trust) * fill
+    return np.where(known[..., None], img.astype(np.float32), fill)
 
 
 def skin_mask(size: int) -> np.ndarray:

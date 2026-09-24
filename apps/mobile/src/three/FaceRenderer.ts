@@ -30,8 +30,6 @@ export interface LoadedFace {
   /** How the eye openings find their place in `textures.eyes`, when the face has an eyeball texture. */
   eyeMaps: { right: EyeMap; left: EyeMap } | null;
   skinTone: number[];
-  /** True when the albedo has no baked lighting (the sample face): render with studio lights. */
-  lit: boolean;
 }
 
 /**
@@ -202,7 +200,7 @@ export class FaceRenderer {
     geometry.setAttribute('eyeShade', new THREE.BufferAttribute(mesh.eyeShade, 1));
     geometry.setAttribute('lid', new THREE.BufferAttribute(face.lid, 2));
     geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-    const material = createFaceMaterial(face.textures, face.skinTone, face.lit, face.eyeMaps);
+    const material = createFaceMaterial(face.textures, face.skinTone, face.eyeMaps);
     const object = new THREE.Mesh(geometry, material);
     object.frustumCulled = false;
     object.visible = false;

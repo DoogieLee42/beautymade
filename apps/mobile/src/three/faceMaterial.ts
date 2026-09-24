@@ -71,7 +71,6 @@ const fragmentShader = /* glsl */ `
   uniform float uReveal;
   uniform vec2 uRevealRange;
   uniform vec3 uAccent;
-  uniform float uLit;
   uniform sampler2D uEyes;
   uniform float uHasEyes;
   uniform vec4 uEyeRightU;
@@ -143,17 +142,10 @@ const fragmentShader = /* glsl */ `
     vec3 nv = normalize(vNormalView);
     vec3 v = normalize(-vViewPos);
     float ndv = clamp(dot(nv, v), 0.0, 1.0);
-    if (uLit > 0.5) {
-      // Unlit albedo (the sample face): a soft studio key + fill, like a sculpture.
-      float key = max(dot(nv, normalize(vec3(-0.5, 0.55, 0.68))), 0.0);
-      float fill = max(dot(nv, normalize(vec3(0.65, 0.05, 0.75))), 0.0);
-      col *= 0.3 + 0.66 * key + 0.2 * fill;
-    } else {
-      // Relative relighting (see file comment); the eyeball keeps the light it was photographed in.
-      if (!eyeball) col *= clamp(faceShade(n) / faceShade(n0), 0.7, 1.3);
-      // A touch of view-dependent shading so turning the head reads as 3D.
-      col *= mix(0.8, 1.0, pow(ndv, 0.7));
-    }
+    // Relative relighting (see file comment); the eyeball keeps the light it was photographed in.
+    if (!eyeball) col *= clamp(faceShade(n) / faceShade(n0), 0.7, 1.3);
+    // A touch of view-dependent shading so turning the head reads as 3D.
+    col *= mix(0.8, 1.0, pow(ndv, 0.7));
 
     // Double-eyelid crease uCreaseHeight mm above the lashes, shaded like a fold rather than a
     // line: darkest in the crease, fading softly down the lid below it (the fold's shadow),
@@ -219,7 +211,6 @@ export const ACCENT = new THREE.Color('#ffffff');
 export function createFaceMaterial(
   textures: FaceMaterialTextures,
   skinTone: number[],
-  lit: boolean,
   eyeMaps: EyeMaps | null = null,
 ): THREE.ShaderMaterial {
   const hasEyes = !!(textures.eyes && eyeMaps);
@@ -235,7 +226,6 @@ export function createFaceMaterial(
       uTone: { value: 0 },
       uRedness: { value: 0 },
       uGlow: { value: 0 },
-      uLit: { value: lit ? 1 : 0 },
       uSkinTone: { value: new THREE.Vector3(...(skinTone.length === 3 ? skinTone : [0.8, 0.65, 0.58])) },
       // Face-space light used only for relative relighting: upper front, slightly to the side.
       uFaceLight: { value: new THREE.Vector3(0.35, 0.55, 0.76).normalize() },
